@@ -6,9 +6,13 @@
  */
 
 import {
-  analyzeDeepStyle,
+  analyzeStyleWithDOM,
+  type StyleProfileData,
+} from '../analysis/dom-style-analyzer';
+import {
   generateDeepStyleGuidePrompt,
   generateCondensedStylePrompt,
+  analyzeDeepStyle,
   type DeepStyleProfile,
 } from '../analysis/style-analyzer';
 import type { BlogPost, Brief } from '@/lib/schema/canonical';

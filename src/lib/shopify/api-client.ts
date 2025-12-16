@@ -72,6 +72,169 @@ async function shopifyRest<T>(
 }
 
 // ============================================================================
+// PRODUCT TYPES
+// ============================================================================
+
+export interface ShopifyProduct {
+  id: number;
+  title: string;
+  handle: string;
+  body_html: string;
+  vendor: string;
+  product_type: string;
+  tags: string;
+  status: 'active' | 'archived' | 'draft';
+  variants: ShopifyVariant[];
+  images: ShopifyImage[];
+  image: ShopifyImage | null;
+}
+
+export interface ShopifyVariant {
+  id: number;
+  product_id: number;
+  title: string;
+  price: string;
+  sku: string;
+  option1: string | null;
+  option2: string | null;
+  option3: string | null;
+  inventory_quantity: number;
+}
+
+export interface ShopifyImage {
+  id: number;
+  product_id: number;
+  src: string;
+  alt: string | null;
+  width: number;
+  height: number;
+}
+
+export interface ShopifyCollection {
+  id: number;
+  handle: string;
+  title: string;
+  body_html: string;
+  image: ShopifyImage | null;
+}
+
+// ============================================================================
+// PRODUCT OPERATIONS
+// ============================================================================
+
+/**
+ * List all products (with pagination)
+ */
+export async function listProducts(options?: {
+  limit?: number;
+  collection_id?: string;
+  status?: 'active' | 'archived' | 'draft';
+}): Promise<ShopifyProduct[]> {
+  const params = new URLSearchParams();
+  params.set('limit', String(options?.limit || 50));
+  if (options?.collection_id) params.set('collection_id', options.collection_id);
+  if (options?.status) params.set('status', options.status);
+
+  const response = await shopifyRest<{ products: ShopifyProduct[] }>(
+    'GET',
+    `/products.json?${params.toString()}`
+  );
+  return response.products;
+}
+
+/**
+ * Get product by ID
+ */
+export async function getProduct(productId: string): Promise<ShopifyProduct> {
+  const response = await shopifyRest<{ product: ShopifyProduct }>(
+    'GET',
+    `/products/${productId}.json`
+  );
+  return response.product;
+}
+
+/**
+ * List all collections
+ */
+export async function listCollections(type: 'smart' | 'custom' | 'all' = 'all'): Promise<ShopifyCollection[]> {
+  const collections: ShopifyCollection[] = [];
+
+  if (type === 'all' || type === 'smart') {
+    const smart = await shopifyRest<{ smart_collections: ShopifyCollection[] }>(
+      'GET',
+      '/smart_collections.json?limit=250'
+    );
+    collections.push(...smart.smart_collections);
+  }
+
+  if (type === 'all' || type === 'custom') {
+    const custom = await shopifyRest<{ custom_collections: ShopifyCollection[] }>(
+      'GET',
+      '/custom_collections.json?limit=250'
+    );
+    collections.push(...custom.custom_collections);
+  }
+
+  return collections;
+}
+
+/**
+ * Get products in a collection
+ */
+export async function getCollectionProducts(collectionId: string): Promise<ShopifyProduct[]> {
+  return listProducts({ collection_id: collectionId, limit: 250 });
+}
+
+/**
+ * Get product URL
+ */
+export function getProductUrl(handle: string, store?: string): string {
+  const storeHost = store || 'alliancechemical.com';
+  return `https://${storeHost}/products/${handle}`;
+}
+
+/**
+ * Get variant URL
+ */
+export function getVariantUrl(productHandle: string, variantId: number, store?: string): string {
+  const storeHost = store || 'alliancechemical.com';
+  return `https://${storeHost}/products/${productHandle}?variant=${variantId}`;
+}
+
+/**
+ * Format product for LLM context
+ */
+export function formatProductForLLM(product: ShopifyProduct, store?: string): {
+  title: string;
+  handle: string;
+  url: string;
+  description: string;
+  variants: Array<{
+    title: string;
+    price: string;
+    url: string;
+  }>;
+  images: string[];
+  tags: string[];
+} {
+  const storeHost = store || 'alliancechemical.com';
+
+  return {
+    title: product.title,
+    handle: product.handle,
+    url: getProductUrl(product.handle, storeHost),
+    description: product.body_html?.replace(/<[^>]*>/g, '').slice(0, 500) || '',
+    variants: product.variants.map((v) => ({
+      title: v.title,
+      price: v.price,
+      url: getVariantUrl(product.handle, v.id, storeHost),
+    })),
+    images: product.images.map((img) => img.src),
+    tags: product.tags ? product.tags.split(',').map((t) => t.trim()) : [],
+  };
+}
+
+// ============================================================================
 // BLOG OPERATIONS
 // ============================================================================
 
@@ -431,7 +594,7 @@ export function formatAsJson(article: GeneratedArticle): string {
 /**
  * Make GraphQL request to Shopify
  */
-async function shopifyGraphQL<T>(
+export async function shopifyGraphQL<T>(
   query: string,
   variables?: Record<string, unknown>
 ): Promise<T> {
@@ -459,6 +622,218 @@ async function shopifyGraphQL<T>(
   }
 
   return json.data as T;
+}
+
+// ============================================================================
+// GRAPHQL PRODUCT QUERIES
+// ============================================================================
+
+/**
+ * Fetch collections with GraphQL
+ */
+export async function fetchCollectionsGraphQL(): Promise<Array<{
+  id: string;
+  handle: string;
+  title: string;
+  productsCount: number;
+}>> {
+  const query = `
+    query GetCollections {
+      collections(first: 100) {
+        nodes {
+          id
+          handle
+          title
+          productsCount
+        }
+      }
+    }
+  `;
+
+  const data = await shopifyGraphQL<{
+    collections: { nodes: Array<{ id: string; handle: string; title: string; productsCount: number }> };
+  }>(query);
+
+  return data.collections.nodes;
+}
+
+/**
+ * Fetch products in a collection with full details
+ */
+export async function fetchCollectionProductsGraphQL(collectionHandle: string): Promise<Array<{
+  id: string;
+  title: string;
+  handle: string;
+  description: string;
+  url: string;
+  featuredImage: { url: string; altText: string | null } | null;
+  images: Array<{ url: string; altText: string | null }>;
+  variants: Array<{
+    id: string;
+    title: string;
+    price: string;
+    url: string;
+  }>;
+  tags: string[];
+}>> {
+  const query = `
+    query GetCollectionProducts($handle: String!) {
+      collectionByHandle(handle: $handle) {
+        products(first: 50) {
+          nodes {
+            id
+            title
+            handle
+            description
+            featuredImage {
+              url
+              altText
+            }
+            images(first: 5) {
+              nodes {
+                url
+                altText
+              }
+            }
+            variants(first: 10) {
+              nodes {
+                id
+                title
+                price
+              }
+            }
+            tags
+          }
+        }
+      }
+    }
+  `;
+
+  const data = await shopifyGraphQL<{
+    collectionByHandle: {
+      products: {
+        nodes: Array<{
+          id: string;
+          title: string;
+          handle: string;
+          description: string;
+          featuredImage: { url: string; altText: string | null } | null;
+          images: { nodes: Array<{ url: string; altText: string | null }> };
+          variants: { nodes: Array<{ id: string; title: string; price: string }> };
+          tags: string[];
+        }>;
+      };
+    } | null;
+  }>(query, { handle: collectionHandle });
+
+  if (!data.collectionByHandle) {
+    return [];
+  }
+
+  const storeHost = 'alliancechemical.com';
+
+  return data.collectionByHandle.products.nodes.map((p) => ({
+    id: p.id,
+    title: p.title,
+    handle: p.handle,
+    description: p.description || '',
+    url: `https://${storeHost}/products/${p.handle}`,
+    featuredImage: p.featuredImage,
+    images: p.images.nodes,
+    variants: p.variants.nodes.map((v) => ({
+      id: v.id,
+      title: v.title,
+      price: v.price,
+      url: `https://${storeHost}/products/${p.handle}?variant=${v.id.split('/').pop()}`,
+    })),
+    tags: p.tags,
+  }));
+}
+
+/**
+ * Fetch single product with full details
+ */
+export async function fetchProductGraphQL(handle: string): Promise<{
+  id: string;
+  title: string;
+  handle: string;
+  description: string;
+  url: string;
+  featuredImage: { url: string; altText: string | null } | null;
+  images: Array<{ url: string; altText: string | null }>;
+  variants: Array<{
+    id: string;
+    title: string;
+    price: string;
+    url: string;
+  }>;
+  tags: string[];
+} | null> {
+  const query = `
+    query GetProduct($handle: String!) {
+      productByHandle(handle: $handle) {
+        id
+        title
+        handle
+        description
+        featuredImage {
+          url
+          altText
+        }
+        images(first: 10) {
+          nodes {
+            url
+            altText
+          }
+        }
+        variants(first: 20) {
+          nodes {
+            id
+            title
+            price
+          }
+        }
+        tags
+      }
+    }
+  `;
+
+  const data = await shopifyGraphQL<{
+    productByHandle: {
+      id: string;
+      title: string;
+      handle: string;
+      description: string;
+      featuredImage: { url: string; altText: string | null } | null;
+      images: { nodes: Array<{ url: string; altText: string | null }> };
+      variants: { nodes: Array<{ id: string; title: string; price: string }> };
+      tags: string[];
+    } | null;
+  }>(query, { handle });
+
+  if (!data.productByHandle) {
+    return null;
+  }
+
+  const p = data.productByHandle;
+  const storeHost = 'alliancechemical.com';
+
+  return {
+    id: p.id,
+    title: p.title,
+    handle: p.handle,
+    description: p.description || '',
+    url: `https://${storeHost}/products/${p.handle}`,
+    featuredImage: p.featuredImage,
+    images: p.images.nodes,
+    variants: p.variants.nodes.map((v) => ({
+      id: v.id,
+      title: v.title,
+      price: v.price,
+      url: `https://${storeHost}/products/${p.handle}?variant=${v.id.split('/').pop()}`,
+    })),
+    tags: p.tags,
+  };
 }
 
 /**

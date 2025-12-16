@@ -250,6 +250,103 @@ export const contentIdeas = pgTable(
 );
 
 // ============================================================================
+// AUTOPILOT JOBS TABLE
+// ============================================================================
+
+/**
+ * Job status for autopilot runs
+ */
+export type AutopilotJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+/**
+ * Structured log entry for autopilot jobs
+ */
+export interface AutopilotLogEntry {
+  timestamp: string;
+  step: string;
+  level: 'info' | 'warn' | 'error' | 'debug';
+  message: string;
+  payload?: Record<string, unknown>;
+}
+
+/**
+ * Score breakdown for topic selection
+ */
+export interface TopicScoreBreakdown {
+  novelty: number;
+  searchIntentMatch: number;
+  conversionPotential: number;
+  internalLinkPotential: number;
+  eeatScore: number;
+  total: number;
+}
+
+/**
+ * Result data stored when job completes
+ */
+export interface AutopilotJobResult {
+  postId?: string;
+  postTitle?: string;
+  topic?: string;
+  collection?: string;
+  scoreBreakdown?: TopicScoreBreakdown;
+  validationPassed?: boolean;
+  validationIssues?: string[];
+  draftWordCount?: number;
+}
+
+export const autopilotJobs = pgTable(
+  'autopilot_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+
+    // Idempotency and concurrency
+    idempotencyKey: varchar('idempotency_key', { length: 100 }),
+
+    // Job status
+    status: varchar('status', { length: 20 }).$type<AutopilotJobStatus>().notNull().default('pending'),
+
+    // Configuration
+    mode: varchar('mode', { length: 20 }).notNull().default('full'), // 'dry_run' | 'full'
+    collectionHandle: varchar('collection_handle', { length: 100 }), // null = random
+    targetWordCount: integer('target_word_count').notNull().default(1500),
+
+    // Progress tracking
+    currentStep: varchar('current_step', { length: 50 }),
+    totalSteps: integer('total_steps').notNull().default(5),
+    completedSteps: integer('completed_steps').notNull().default(0),
+
+    // Structured logs
+    logs: jsonb('logs').$type<AutopilotLogEntry[]>().notNull().default([]),
+
+    // Result data
+    result: jsonb('result').$type<AutopilotJobResult | null>(),
+    errorMessage: text('error_message'),
+
+    // Relations
+    blogPostId: uuid('blog_post_id').references(() => blogPosts.id),
+    authorId: uuid('author_id').references(() => authors.id),
+
+    // Metadata
+    triggeredBy: varchar('triggered_by', { length: 100 }), // user email or 'cron'
+    requestId: varchar('request_id', { length: 100 }),
+
+    // Timestamps
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+
+    // Lock for concurrency control (TTL-based)
+    lockedUntil: timestamp('locked_until', { withTimezone: true }),
+  },
+  (table) => [
+    index('autopilot_jobs_status_idx').on(table.status),
+    index('autopilot_jobs_created_at_idx').on(table.createdAt),
+    uniqueIndex('autopilot_jobs_idempotency_key_idx').on(table.idempotencyKey),
+  ]
+);
+
+// ============================================================================
 // IMPORT LOGS TABLE
 // ============================================================================
 
@@ -342,6 +439,17 @@ export const importLogsRelations = relations(importLogs, ({ one }) => ({
   }),
 }));
 
+export const autopilotJobsRelations = relations(autopilotJobs, ({ one }) => ({
+  post: one(blogPosts, {
+    fields: [autopilotJobs.blogPostId],
+    references: [blogPosts.id],
+  }),
+  author: one(authors, {
+    fields: [autopilotJobs.authorId],
+    references: [authors.id],
+  }),
+}));
+
 // ============================================================================
 // TYPE EXPORTS
 // ============================================================================
@@ -363,3 +471,6 @@ export type NewContentIdea = typeof contentIdeas.$inferInsert;
 
 export type ImportLog = typeof importLogs.$inferSelect;
 export type NewImportLog = typeof importLogs.$inferInsert;
+
+export type AutopilotJob = typeof autopilotJobs.$inferSelect;
+export type NewAutopilotJob = typeof autopilotJobs.$inferInsert;

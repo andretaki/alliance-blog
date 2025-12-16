@@ -103,10 +103,19 @@ const OutlineSectionSchema = z.object({
   estimatedWords: coerceNumber.default(200),
 }).passthrough();
 
+const FAQSourceSchema = z.any().transform((val) => {
+  if (!val) return undefined;
+  const str = String(val).toLowerCase().replace(/[\s-]/g, '_');
+  const validSources = ['people_also_ask', 'customer_question', 'common_search', 'industry_specific'] as const;
+  return validSources.includes(str as (typeof validSources)[number])
+    ? (str as (typeof validSources)[number])
+    : undefined;
+});
+
 const FAQItemSchema = z.object({
   question: coerceString,
   keyPointsForAnswer: coerceStringArray,
-  source: z.string().optional(),
+  source: FAQSourceSchema.optional(),
 }).passthrough();
 
 const CTASectionSchema = z.object({

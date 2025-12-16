@@ -101,56 +101,79 @@ lib/
 ├── schema/                  # Schema definitions (no dependencies)
 │   ├── canonical.ts         # Canonical blog schema types
 │   ├── canonical.zod.ts     # Zod validation schema
-│   ├── canonical.json.ts    # JSON Schema for AI output
 │   └── intermediate.ts      # Intermediate representation types
 │
-├── db/                      # Database layer (depends: schema)
+├── config/                  # Configuration (no dependencies)
+│   ├── env.ts               # Environment variables
+│   └── constants.ts         # App constants
+│
+├── db/                      # Database layer (depends: schema, config)
 │   ├── client.ts            # Drizzle client setup
-│   ├── schema.ts            # Drizzle table definitions
-│   ├── migrations/          # SQL migrations
-│   └── queries/             # Typed query helpers
-│       ├── posts.ts
-│       ├── ideas.ts
-│       ├── authors.ts
-│       └── embeddings.ts
+│   └── schema.ts            # Drizzle table definitions
 │
 ├── import/                  # Import layer (depends: schema, db)
 │   ├── fetchers/
-│   │   ├── shopify.ts       # Shopify GraphQL fetcher
-│   │   ├── sitemap.ts       # Sitemap crawler
-│   │   └── http.ts          # Generic HTTP fetcher
+│   │   ├── shopify.ts       # Shopify API fetcher
+│   │   └── http.ts          # Generic HTTP fetcher with sitemap support
 │   ├── parsers/
-│   │   ├── html.ts          # HTML → IR parser
-│   │   └── jsonld.ts        # JSON-LD extractor
+│   │   └── html.ts          # HTML → IR parser (includes JSON-LD extraction)
 │   ├── normalizer.ts        # IR → Canonical schema
 │   └── pipeline.ts          # Orchestrates import
 │
 ├── ai/                      # AI layer (depends: schema, db)
 │   ├── providers/
+│   │   ├── index.ts         # Provider exports
 │   │   ├── openai.ts        # OpenAI client wrapper
 │   │   ├── anthropic.ts     # Anthropic client wrapper
 │   │   └── types.ts         # Provider interface
+│   ├── analysis/
+│   │   └── style-analyzer.ts # Content style analysis
 │   ├── embeddings.ts        # Embedding generation
 │   ├── retrieval.ts         # Vector search
 │   ├── generation/
 │   │   ├── topics.ts        # Topic suggestion
-│   │   ├── briefs.ts        # Brief generation
 │   │   ├── drafts.ts        # Draft generation
-│   │   └── revision.ts      # Content revision
-│   └── prompts/             # Prompt templates
-│       ├── topic.ts
-│       ├── brief.ts
-│       ├── draft.ts
-│       └── system.ts
+│   │   └── style-aware-prompts.ts # Style-guided content prompts
+│   └── prompts/
+│       └── system.ts        # System prompts
 │
-├── seo/                     # SEO layer (depends: schema)
-│   ├── validators.ts        # SEO field validation
-│   ├── jsonld.ts            # JSON-LD generation
-│   └── checks.ts            # E-E-A-T compliance checks
+├── discovery/               # Topic discovery (depends: ai, db)
+│   ├── index.ts             # Discovery exports
+│   ├── topic-finder.ts      # Find new topic opportunities
+│   ├── topic-scorer.ts      # Score and rank topics
+│   └── existing-content.ts  # Analyze existing content
 │
-└── config/                  # Configuration (no dependencies)
-    ├── env.ts               # Environment variables
-    └── constants.ts         # App constants
+├── outline/                 # Outline generation (depends: ai)
+│   ├── index.ts             # Outline exports
+│   ├── outline-generator.ts # Generate article outlines
+│   └── outline-types.ts     # Outline type definitions
+│
+├── shopify/                 # Shopify integration (depends: schema, ai)
+│   ├── index.ts             # Shopify exports
+│   ├── api-client.ts        # Shopify Admin API client
+│   ├── article-generator.ts # Generate Shopify-formatted articles
+│   ├── article-validator.ts # Validate articles for Shopify
+│   ├── content-types.ts     # Shopify content type definitions
+│   ├── format-rules.ts      # Shopify HTML formatting rules
+│   └── product-matcher.ts   # Match content to products
+│
+└── seo/                     # SEO layer (depends: schema)
+    ├── validators.ts        # SEO field validation
+    └── jsonld.ts            # JSON-LD generation
+```
+
+### Scripts Directory
+
+```
+scripts/
+├── analyze-style.ts         # Analyze content style patterns
+├── create-author.ts         # Create author records
+├── discover-topics.ts       # Run topic discovery pipeline
+├── generate-article.ts      # Generate full articles
+├── generate-outline.ts      # Generate article outlines
+├── import-shopify.ts        # Import from Shopify
+├── index-content.ts         # Index content for search
+└── test-style-analyzer.ts   # Test style analysis
 ```
 
 ---
@@ -2218,196 +2241,176 @@ function generateFaqPageJsonLd(post: BlogPost): FaqPageJsonLd | null {
 
 ## Part 8: Application Structure and APIs
 
-### Project Directory Structure
+### Project Directory Structure (Current Implementation)
 
 ```
 alliance-blog/
-├── app/                              # Next.js App Router
-│   ├── (public)/                     # Public-facing blog routes
-│   │   ├── blog/
-│   │   │   ├── page.tsx              # Blog listing page
-│   │   │   └── [slug]/
-│   │   │       └── page.tsx          # Individual blog post page
-│   │   └── layout.tsx
-│   │
-│   ├── admin/                        # Admin dashboard (protected)
-│   │   ├── layout.tsx                # Admin layout with nav
-│   │   ├── page.tsx                  # Dashboard overview
-│   │   ├── posts/
-│   │   │   ├── page.tsx              # All posts list
-│   │   │   ├── [id]/
-│   │   │   │   ├── page.tsx          # Post editor
-│   │   │   │   └── preview/
-│   │   │   │       └── page.tsx      # Post preview
+├── src/
+│   ├── app/                          # Next.js App Router
+│   │   ├── admin/                    # Admin dashboard
+│   │   │   ├── layout.tsx            # Admin layout with nav
+│   │   │   ├── page.tsx              # Dashboard overview
+│   │   │   ├── posts/
+│   │   │   │   ├── page.tsx          # All posts list
+│   │   │   │   └── [id]/
+│   │   │   │       └── page.tsx      # Post editor
+│   │   │   ├── ideas/
+│   │   │   │   ├── page.tsx          # Content ideas list
+│   │   │   │   └── generate/
+│   │   │   │       └── page.tsx      # Generate new ideas
+│   │   │   ├── authors/
+│   │   │   │   ├── page.tsx          # Author management
+│   │   │   │   └── new/
+│   │   │   │       └── page.tsx      # Create new author
+│   │   │   ├── clusters/
+│   │   │   │   └── page.tsx          # Topic cluster management
 │   │   │   └── import/
-│   │   │       └── page.tsx          # Import management
-│   │   ├── ideas/
-│   │   │   ├── page.tsx              # Content ideas list
-│   │   │   ├── new/
-│   │   │   │   └── page.tsx          # Generate new ideas
-│   │   │   └── [id]/
-│   │   │       └── page.tsx          # Idea detail/brief creation
-│   │   ├── drafts/
-│   │   │   ├── page.tsx              # Drafts in progress
-│   │   │   └── [id]/
-│   │   │       └── page.tsx          # Draft editor
-│   │   ├── authors/
-│   │   │   ├── page.tsx              # Author management
-│   │   │   └── [id]/
-│   │   │       └── page.tsx          # Author editor
-│   │   ├── clusters/
-│   │   │   └── page.tsx              # Topic cluster management
-│   │   ├── analytics/
-│   │   │   └── page.tsx              # Performance dashboard
-│   │   └── settings/
-│   │       └── page.tsx              # System settings
+│   │   │       └── page.tsx          # Content import management
+│   │   │
+│   │   ├── api/                      # API routes
+│   │   │   ├── import/
+│   │   │   │   ├── shopify/
+│   │   │   │   │   └── route.ts      # POST: Start Shopify import
+│   │   │   │   ├── sitemap/
+│   │   │   │   │   └── route.ts      # POST: Start sitemap crawl
+│   │   │   │   └── urls/
+│   │   │   │       └── route.ts      # POST: Import from URLs
+│   │   │   ├── posts/
+│   │   │   │   ├── route.ts          # GET: List, POST: Create
+│   │   │   │   └── [id]/
+│   │   │   │       ├── route.ts      # GET, PATCH, DELETE
+│   │   │   │       ├── publish/
+│   │   │   │       │   └── route.ts  # POST: Publish post
+│   │   │   │       └── validate/
+│   │   │   │           └── route.ts  # GET: Validate post
+│   │   │   ├── ideas/
+│   │   │   │   ├── route.ts          # GET: List, POST: Create
+│   │   │   │   ├── generate/
+│   │   │   │   │   └── route.ts      # POST: AI topic generation
+│   │   │   │   └── [id]/
+│   │   │   │       ├── route.ts      # GET, PATCH, DELETE
+│   │   │   │       └── brief/
+│   │   │   │           └── route.ts  # POST: Generate brief
+│   │   │   ├── drafts/
+│   │   │   │   └── route.ts          # POST: Generate draft
+│   │   │   ├── embeddings/
+│   │   │   │   ├── route.ts          # POST: Compute embeddings
+│   │   │   │   └── search/
+│   │   │   │       └── route.ts      # POST: Vector search
+│   │   │   ├── authors/
+│   │   │   │   ├── route.ts          # GET, POST
+│   │   │   │   └── [id]/
+│   │   │   │       └── route.ts      # GET, PATCH, DELETE
+│   │   │   └── clusters/
+│   │   │       ├── route.ts          # GET, POST
+│   │   │       └── [id]/
+│   │   │           └── route.ts      # GET, PATCH, DELETE
+│   │   │
+│   │   ├── layout.tsx                # Root layout
+│   │   ├── page.tsx                  # Home page
+│   │   └── globals.css
 │   │
-│   ├── api/                          # API routes
-│   │   ├── import/
-│   │   │   ├── shopify/
-│   │   │   │   └── route.ts          # POST: Start Shopify import
-│   │   │   ├── sitemap/
-│   │   │   │   └── route.ts          # POST: Start sitemap crawl
-│   │   │   └── status/
-│   │   │       └── [jobId]/
-│   │   │           └── route.ts      # GET: Import job status
-│   │   ├── posts/
-│   │   │   ├── route.ts              # GET: List, POST: Create
-│   │   │   └── [id]/
-│   │   │       ├── route.ts          # GET, PATCH, DELETE
-│   │   │       ├── publish/
-│   │   │       │   └── route.ts      # POST: Publish post
-│   │   │       └── validate/
-│   │   │           └── route.ts      # GET: Validate post
-│   │   ├── ideas/
-│   │   │   ├── route.ts              # GET: List, POST: Create
-│   │   │   ├── generate/
-│   │   │   │   └── route.ts          # POST: AI topic generation
-│   │   │   └── [id]/
-│   │   │       ├── route.ts          # GET, PATCH, DELETE
-│   │   │       └── brief/
-│   │   │           └── route.ts      # POST: Generate brief
-│   │   ├── drafts/
-│   │   │   ├── generate/
-│   │   │   │   └── route.ts          # POST: Generate full draft
-│   │   │   └── [id]/
-│   │   │       ├── route.ts          # GET, PATCH
-│   │   │       └── revise/
-│   │   │           └── route.ts      # POST: Revise section
-│   │   ├── embeddings/
-│   │   │   ├── compute/
-│   │   │   │   └── route.ts          # POST: Compute for post
-│   │   │   └── search/
-│   │   │       └── route.ts          # POST: Vector search
-│   │   ├── authors/
-│   │   │   └── route.ts              # CRUD
-│   │   ├── clusters/
-│   │   │   └── route.ts              # CRUD
-│   │   └── webhooks/
-│   │       └── shopify/
-│   │           └── route.ts          # Shopify webhook receiver
-│   │
-│   ├── layout.tsx                    # Root layout
-│   └── globals.css
+│   └── lib/                          # Core business logic (see Module Dependency Graph)
 │
-├── components/                       # React components
-│   ├── admin/
-│   │   ├── PostEditor.tsx            # Main post editing interface
-│   │   ├── SectionEditor.tsx         # Section content editor
-│   │   ├── FAQEditor.tsx             # FAQ list editor
-│   │   ├── MetadataPanel.tsx         # SEO metadata sidebar
-│   │   ├── ValidationPanel.tsx       # Real-time validation display
-│   │   ├── AIAssistPanel.tsx         # AI generation controls
-│   │   ├── InternalLinkPicker.tsx    # Link insertion UI
-│   │   ├── AuthorSelector.tsx        # Author dropdown
-│   │   ├── StatusBadge.tsx           # Post status indicator
-│   │   ├── ImportProgress.tsx        # Import job progress
-│   │   └── PerformanceChart.tsx      # Analytics visualization
-│   ├── blog/
-│   │   ├── PostCard.tsx              # Blog listing card
-│   │   ├── PostContent.tsx           # Rendered post content
-│   │   ├── TableOfContents.tsx       # Section navigation
-│   │   ├── FAQSection.tsx            # FAQ accordion
-│   │   ├── AuthorBio.tsx             # Author info display
-│   │   └── RelatedPosts.tsx          # Related content
-│   └── ui/                           # Shared UI components
-│       ├── Button.tsx
-│       ├── Input.tsx
-│       ├── Select.tsx
-│       ├── Dialog.tsx
-│       ├── Toast.tsx
-│       └── ... (design system)
-│
-├── lib/                              # Core business logic
-│   ├── schema/
-│   │   ├── canonical.ts              # TypeScript types
-│   │   ├── canonical.zod.ts          # Zod schemas
-│   │   ├── canonical.json-schema.ts  # JSON Schema for AI
-│   │   └── intermediate.ts           # Import IR types
-│   ├── db/
-│   │   ├── client.ts                 # Drizzle client
-│   │   ├── schema.ts                 # Drizzle table definitions
-│   │   ├── migrate.ts                # Migration runner
-│   │   └── queries/
-│   │       ├── posts.ts
-│   │       ├── ideas.ts
-│   │       ├── authors.ts
-│   │       ├── clusters.ts
-│   │       └── embeddings.ts
-│   ├── import/
-│   │   ├── fetchers/
-│   │   │   ├── shopify.ts
-│   │   │   ├── sitemap.ts
-│   │   │   └── http.ts
-│   │   ├── parsers/
-│   │   │   ├── html.ts
-│   │   │   └── jsonld.ts
-│   │   ├── normalizer.ts
-│   │   ├── pipeline.ts
-│   │   └── analyzer.ts               # Pattern analysis
-│   ├── ai/
-│   │   ├── providers/
-│   │   │   ├── openai.ts
-│   │   │   ├── anthropic.ts
-│   │   │   └── types.ts
-│   │   ├── embeddings.ts
-│   │   ├── retrieval.ts
-│   │   ├── generation/
-│   │   │   ├── topics.ts
-│   │   │   ├── briefs.ts
-│   │   │   ├── drafts.ts
-│   │   │   └── revision.ts
-│   │   └── prompts/
-│   │       ├── system.ts
-│   │       ├── topic.ts
-│   │       ├── brief.ts
-│   │       ├── draft.ts
-│   │       └── eeat-guidelines.ts
-│   ├── seo/
-│   │   ├── validators.ts
-│   │   ├── jsonld.ts
-│   │   └── checks.ts
-│   ├── shopify/
-│   │   ├── client.ts                 # Shopify Admin API client
-│   │   └── publish.ts                # Push to Shopify
-│   └── config/
-│       ├── env.ts                    # Environment config
-│       └── constants.ts
+├── scripts/                          # CLI scripts for automation
+│   ├── analyze-style.ts              # Analyze content style
+│   ├── create-author.ts              # Create author records
+│   ├── discover-topics.ts            # Topic discovery pipeline
+│   ├── generate-article.ts           # Full article generation
+│   ├── generate-outline.ts           # Outline generation
+│   ├── import-shopify.ts             # Shopify import
+│   ├── index-content.ts              # Content indexing
+│   └── test-style-analyzer.ts        # Style analyzer tests
 │
 ├── drizzle/                          # Database migrations
-│   ├── migrations/
-│   │   └── 0000_initial.sql
-│   └── drizzle.config.ts
+│   └── migrations/
+│       └── *.sql
 │
-├── public/
-│
-├── .env.local                        # Local environment variables
-├── .env.example                      # Environment template
-├── package.json
-├── tsconfig.json
-├── drizzle.config.ts
-├── next.config.js
-└── tailwind.config.js
+├── generated-articles/               # Output directory for generated content
+├── outlines/                         # Generated article outlines
+├── data/                             # Data files (content index, etc.)
+└── docs/                             # Documentation
+    ├── ARCHITECTURE.md               # This file
+    └── BLOG_STYLE_GUIDE.md           # Content style guide
+```
+
+### Components (Planned)
+
+Components are currently inline in page files. Future extraction:
+
+```
+src/components/                       # React components (to be extracted)
+├── admin/
+│   ├── PostEditor.tsx                # Main post editing interface
+│   ├── MetadataPanel.tsx             # SEO metadata sidebar
+│   ├── ValidationPanel.tsx           # Real-time validation display
+│   └── StatusBadge.tsx               # Post status indicator
+├── blog/
+│   ├── PostCard.tsx                  # Blog listing card
+│   ├── PostContent.tsx               # Rendered post content
+│   └── AuthorBio.tsx                 # Author info display
+└── ui/                               # Shared UI components
+    └── ... (design system)
+```
+
+### Lib Directory Structure (Current)
+
+```
+src/lib/
+├── schema/
+│   ├── canonical.ts                  # TypeScript types
+│   ├── canonical.zod.ts              # Zod schemas
+│   └── intermediate.ts               # Import IR types
+├── config/
+│   ├── env.ts                        # Environment variables
+│   └── constants.ts                  # App constants
+├── db/
+│   ├── client.ts                     # Drizzle client
+│   └── schema.ts                     # Drizzle table definitions
+├── import/
+│   ├── fetchers/
+│   │   ├── shopify.ts                # Shopify API fetcher
+│   │   └── http.ts                   # HTTP fetcher with sitemap
+│   ├── parsers/
+│   │   └── html.ts                   # HTML parser
+│   ├── normalizer.ts                 # Schema normalizer
+│   └── pipeline.ts                   # Import orchestrator
+├── ai/
+│   ├── providers/
+│   │   ├── index.ts                  # Provider exports
+│   │   ├── openai.ts                 # OpenAI client
+│   │   ├── anthropic.ts              # Anthropic client
+│   │   └── types.ts                  # Provider types
+│   ├── analysis/
+│   │   └── style-analyzer.ts         # Style analysis
+│   ├── embeddings.ts                 # Embedding generation
+│   ├── retrieval.ts                  # Vector search
+│   ├── generation/
+│   │   ├── topics.ts                 # Topic generation
+│   │   ├── drafts.ts                 # Draft generation
+│   │   └── style-aware-prompts.ts    # Style-guided prompts
+│   └── prompts/
+│       └── system.ts                 # System prompts
+├── discovery/
+│   ├── index.ts                      # Discovery exports
+│   ├── topic-finder.ts               # Topic discovery
+│   ├── topic-scorer.ts               # Topic scoring
+│   └── existing-content.ts           # Content analysis
+├── outline/
+│   ├── index.ts                      # Outline exports
+│   ├── outline-generator.ts          # Outline generation
+│   └── outline-types.ts              # Outline types
+├── shopify/
+│   ├── index.ts                      # Shopify exports
+│   ├── api-client.ts                 # Shopify Admin API
+│   ├── article-generator.ts          # Article generation
+│   ├── article-validator.ts          # Article validation
+│   ├── content-types.ts              # Content types
+│   ├── format-rules.ts               # Formatting rules
+│   └── product-matcher.ts            # Product matching
+└── seo/
+    ├── validators.ts                 # SEO validation
+    └── jsonld.ts                     # JSON-LD generation
 ```
 
 ### API Route Specifications
@@ -2765,52 +2768,29 @@ Features:
 
 ## Part 9: Implementation Roadmap and Checklist
 
-### Phase 1: Project Setup and Infrastructure
+### Phase 1: Project Setup and Infrastructure ✅
 
 #### 1.1 Initialize Next.js Project
-- [ ] Create Next.js 14+ project with App Router
-  ```bash
-  npx create-next-app@latest alliance-blog --typescript --tailwind --eslint --app
-  ```
-- [ ] Configure TypeScript strict mode in `tsconfig.json`
-- [ ] Set up path aliases (`@/lib`, `@/components`, etc.)
-- [ ] Install core dependencies:
-  ```bash
-  npm install drizzle-orm postgres pg
-  npm install -D drizzle-kit @types/pg
-  npm install zod
-  npm install openai @anthropic-ai/sdk
-  npm install cheerio
-  npm install @shopify/shopify-api
-  ```
+- [x] Create Next.js 14+ project with App Router
+- [x] Configure TypeScript strict mode in `tsconfig.json`
+- [x] Set up path aliases (`@/lib`, `@/components`, etc.)
+- [x] Install core dependencies (drizzle-orm, zod, openai, anthropic, cheerio)
 
 #### 1.2 Environment Configuration
-- [ ] Create `.env.local` with required variables:
-  ```
-  DATABASE_URL=postgres://...
-  OPENAI_API_KEY=...
-  ANTHROPIC_API_KEY=...
-  SHOPIFY_STORE=alliance-chemical-store.myshopify.com
-  SHOPIFY_ACCESS_TOKEN=...
-  SHOPIFY_API_KEY=...
-  SHOPIFY_API_SECRET=...
-  ```
-- [ ] Create `lib/config/env.ts` with typed environment access
-- [ ] Create `.env.example` template
+- [x] Create `.env.local` with required variables
+- [x] Create `lib/config/env.ts` with typed environment access
+- [x] Create `lib/config/constants.ts` with app constants
 
 #### 1.3 Database Setup
-- [ ] Set up PostgreSQL database (Vercel Postgres, Neon, or Supabase)
-- [ ] Enable pgvector extension:
-  ```sql
-  CREATE EXTENSION IF NOT EXISTS vector;
-  ```
-- [ ] Configure Drizzle in `drizzle.config.ts`
-- [ ] Create database client in `lib/db/client.ts`
+- [x] Set up PostgreSQL database
+- [x] Enable pgvector extension
+- [x] Configure Drizzle in `drizzle.config.ts`
+- [x] Create database client in `lib/db/client.ts`
 
-### Phase 2: Schema and Database Implementation
+### Phase 2: Schema and Database Implementation ✅
 
 #### 2.1 TypeScript Types
-- [ ] Create `lib/schema/canonical.ts`:
+- [x] Create `lib/schema/canonical.ts`:
   - Define `PostStatus`, `SearchIntent`, `LinkType`, `HeadingLevel` enums
   - Define `Author`, `Reviewer`, `Section`, `FAQ`, `InternalLink` types
   - Define `ExperienceEvidence`, `ArticleJsonLd`, `FaqPageJsonLd` types
@@ -2818,20 +2798,17 @@ Features:
   - Define `ContentIdea`, `TopicCluster` types
 
 #### 2.2 Zod Validation Schemas
-- [ ] Create `lib/schema/canonical.zod.ts`:
+- [x] Create `lib/schema/canonical.zod.ts`:
   - Create Zod schemas matching each TypeScript type
   - Add all validation constraints (min/max length, patterns)
   - Export validation functions
   - Add custom error messages
 
 #### 2.3 JSON Schema for AI
-- [ ] Create `lib/schema/canonical.json-schema.ts`:
-  - Generate JSON Schema from Zod using `zod-to-json-schema`
-  - Or manually create JSON Schema matching the types
-  - Export schema objects for each AI task
+- [ ] ~~Create `lib/schema/canonical.json-schema.ts`~~ (deferred - using Zod directly with AI providers)
 
 #### 2.4 Drizzle Tables
-- [ ] Create `lib/db/schema.ts`:
+- [x] Create `lib/db/schema.ts`:
   - Define `authors` table
   - Define `topicClusters` table
   - Define `blogPosts` table with all columns
@@ -2841,57 +2818,32 @@ Features:
   - Set up relations between tables
 
 #### 2.5 Migrations
-- [ ] Generate initial migration:
-  ```bash
-  npx drizzle-kit generate:pg
-  ```
-- [ ] Review generated SQL
-- [ ] Run migration:
-  ```bash
-  npx drizzle-kit push:pg
-  ```
-- [ ] Create pgvector index for embeddings:
-  ```sql
-  CREATE INDEX ON blog_post_embeddings
-  USING ivfflat (embedding vector_cosine_ops)
-  WITH (lists = 100);
-  ```
+- [x] Generate initial migration
+- [x] Review generated SQL
+- [x] Run migration
+- [x] Create pgvector index for embeddings
 
 #### 2.6 Query Helpers
-- [ ] Create `lib/db/queries/posts.ts`:
-  - `getPostById`, `getPostBySlug`
-  - `listPosts` with filters and pagination
-  - `createPost`, `updatePost`, `deletePost`
-  - `upsertBySlug` for import
-- [ ] Create `lib/db/queries/authors.ts`
-- [ ] Create `lib/db/queries/clusters.ts`
-- [ ] Create `lib/db/queries/embeddings.ts`:
-  - `createEmbedding`, `deleteEmbeddingsForPost`
-  - `searchSimilar` with pgvector
-- [ ] Create `lib/db/queries/ideas.ts`
+- [ ] ~~Create separate query helper files~~ (deferred - queries inline in API routes for now)
 
-### Phase 3: Import Pipeline
+### Phase 3: Import Pipeline ✅
 
 #### 3.1 Intermediate Representation
-- [ ] Create `lib/schema/intermediate.ts`:
+- [x] Create `lib/schema/intermediate.ts`:
   - Define `IntermediatePost` type
   - Define shopify-specific fields
 
 #### 3.2 Fetchers
-- [ ] Create `lib/import/fetchers/shopify.ts`:
-  - Shopify Admin GraphQL client setup
-  - `fetchAllArticles` with pagination
-  - `fetchArticleById`
+- [x] Create `lib/import/fetchers/shopify.ts`:
+  - Shopify API fetcher
   - Rate limiting and error handling
-- [ ] Create `lib/import/fetchers/sitemap.ts`:
-  - `fetchSitemap` XML parser
-  - `filterBlogUrls` with pattern matching
-- [ ] Create `lib/import/fetchers/http.ts`:
+- [x] Create `lib/import/fetchers/http.ts`:
   - Generic HTTP fetcher with retry
   - Concurrent request limiting
+  - Sitemap parsing included
 
 #### 3.3 Parsers
-- [ ] Create `lib/import/parsers/html.ts`:
+- [x] Create `lib/import/parsers/html.ts`:
   - Use cheerio to parse HTML
   - Extract `<title>`, meta tags, canonical
   - Extract headings with hierarchy
@@ -2899,12 +2851,10 @@ Features:
   - Extract lists and tables
   - Extract internal/external links
   - Detect content area (article, main)
-- [ ] Create `lib/import/parsers/jsonld.ts`:
-  - Extract all JSON-LD blocks
-  - Parse and validate structure
+  - JSON-LD extraction included
 
 #### 3.4 Normalizer
-- [ ] Create `lib/import/normalizer.ts`:
+- [x] Create `lib/import/normalizer.ts`:
   - `normalizeToCanonical(ir: IntermediatePost): Partial<BlogPost>`
   - Map fields with defaults
   - Generate sections from heading groups
@@ -2913,76 +2863,73 @@ Features:
   - Calculate word count, reading time
 
 #### 3.5 Pipeline Orchestrator
-- [ ] Create `lib/import/pipeline.ts`:
+- [x] Create `lib/import/pipeline.ts`:
   - `runShopifyImport(options)` - full pipeline
   - `runSitemapImport(options)` - full pipeline
   - Transaction handling
   - Progress tracking
-  - Error logging to `importLogs`
+  - Error logging
   - Idempotent upsert logic
 
 #### 3.6 Analyzer
-- [ ] Create `lib/import/analyzer.ts`:
-  - `analyzeImportedPosts(): SchemaAnalysisResult`
-  - Calculate patterns and statistics
-  - Identify weaknesses
+- [ ] ~~Create `lib/import/analyzer.ts`~~ (moved to discovery module)
 
-### Phase 4: AI Integration
+### Phase 4: AI Integration ✅
 
 #### 4.1 Provider Setup
-- [ ] Create `lib/ai/providers/types.ts`:
+- [x] Create `lib/ai/providers/types.ts`:
   - Define `AIProvider` interface
   - Define `GenerationOptions` type
-- [ ] Create `lib/ai/providers/openai.ts`:
+- [x] Create `lib/ai/providers/openai.ts`:
   - OpenAI client wrapper
-  - `generateStructured` with JSON Schema mode
-  - `generateText` basic completion
-  - `streamText` streaming support
+  - Structured output support
   - Error handling and retries
-- [ ] Create `lib/ai/providers/anthropic.ts`:
+- [x] Create `lib/ai/providers/anthropic.ts`:
   - Anthropic client wrapper
-  - Use tool_use for structured output
+  - Tool use for structured output
   - Same interface as OpenAI
+- [x] Create `lib/ai/providers/index.ts`:
+  - Provider exports and factory
 
 #### 4.2 Embeddings
-- [ ] Create `lib/ai/embeddings.ts`:
+- [x] Create `lib/ai/embeddings.ts`:
   - `embedText(text: string): Promise<number[]>`
   - `embedBatch(texts: string[]): Promise<number[][]>`
   - Chunking utilities
   - Model configuration
 
 #### 4.3 Retrieval
-- [ ] Create `lib/ai/retrieval.ts`:
+- [x] Create `lib/ai/retrieval.ts`:
   - `retrieveSimilarPosts(query, options)`
   - `retrieveExemplars(topic, options)`
   - Performance-weighted scoring
   - Cluster filtering
 
 #### 4.4 Generation Modules
-- [ ] Create `lib/ai/prompts/system.ts`:
+- [x] Create `lib/ai/prompts/system.ts`:
   - Base system prompts
   - E-E-A-T guidelines
   - Helpful content guidelines
-- [ ] Create `lib/ai/generation/topics.ts`:
-  - `generateTopicSuggestions(input): Promise<TopicSuggestionOutput>`
+- [x] Create `lib/ai/generation/topics.ts`:
+  - `generateTopicSuggestions(input)`
   - Prompt construction
   - Output validation
-- [ ] Create `lib/ai/generation/briefs.ts`:
-  - `generateBrief(input): Promise<BriefOutput>`
-  - Include exemplar posts
-  - Suggest internal links
-- [ ] Create `lib/ai/generation/drafts.ts`:
+- [x] Create `lib/ai/generation/drafts.ts`:
   - `generateDraft(input): Promise<BlogPost>`
   - Full schema compliance
+- [x] Create `lib/ai/generation/style-aware-prompts.ts`:
+  - Style-guided prompt construction
+- [x] Create `lib/ai/analysis/style-analyzer.ts`:
+  - Analyze content style patterns
   - Streaming support
 - [ ] Create `lib/ai/generation/revision.ts`:
   - `reviseDraft(input): Promise<RevisionOutput>`
   - Section-level updates
 
-### Phase 5: SEO and Validation
+### Phase 5: SEO and Validation ✅
 
 #### 5.1 Validators
-- [ ] Create `lib/seo/validators.ts`:
+- [x] Create `lib/seo/validators.ts`:
   - `validatePost(post): PostValidationReport`
   - Structure checks (title, sections, FAQs)
   - SEO checks (meta, keywords, links)
@@ -2991,133 +2938,119 @@ Features:
   - Score calculation
 
 #### 5.2 JSON-LD Generation
-- [ ] Create `lib/seo/jsonld.ts`:
+- [x] Create `lib/seo/jsonld.ts`:
   - `generateArticleJsonLd(post, org): ArticleJsonLd`
   - `generateFaqPageJsonLd(post): FaqPageJsonLd`
   - Validation of generated JSON-LD
 
-### Phase 6: API Routes
+### Phase 6: API Routes ✅
 
 #### 6.1 Import APIs
-- [ ] Create `app/api/import/shopify/route.ts`
-- [ ] Create `app/api/import/sitemap/route.ts`
-- [ ] Create `app/api/import/status/[jobId]/route.ts`
-- [ ] Add background job handling (consider using Vercel Cron or queue)
+- [x] Create `app/api/import/shopify/route.ts`
+- [x] Create `app/api/import/sitemap/route.ts`
+- [x] Create `app/api/import/urls/route.ts`
 
 #### 6.2 Posts APIs
-- [ ] Create `app/api/posts/route.ts` (GET, POST)
-- [ ] Create `app/api/posts/[id]/route.ts` (GET, PATCH, DELETE)
-- [ ] Create `app/api/posts/[id]/publish/route.ts`
-- [ ] Create `app/api/posts/[id]/validate/route.ts`
+- [x] Create `app/api/posts/route.ts` (GET, POST)
+- [x] Create `app/api/posts/[id]/route.ts` (GET, PATCH, DELETE)
+- [x] Create `app/api/posts/[id]/publish/route.ts`
+- [x] Create `app/api/posts/[id]/validate/route.ts`
 
 #### 6.3 Ideas APIs
-- [ ] Create `app/api/ideas/route.ts` (GET, POST)
-- [ ] Create `app/api/ideas/generate/route.ts`
-- [ ] Create `app/api/ideas/[id]/route.ts`
-- [ ] Create `app/api/ideas/[id]/brief/route.ts`
+- [x] Create `app/api/ideas/route.ts` (GET, POST)
+- [x] Create `app/api/ideas/generate/route.ts`
+- [x] Create `app/api/ideas/[id]/route.ts`
+- [x] Create `app/api/ideas/[id]/brief/route.ts`
 
 #### 6.4 Drafts APIs
-- [ ] Create `app/api/drafts/generate/route.ts` (with streaming)
-- [ ] Create `app/api/drafts/[id]/route.ts`
-- [ ] Create `app/api/drafts/[id]/revise/route.ts`
+- [x] Create `app/api/drafts/route.ts`
 
 #### 6.5 Embeddings APIs
-- [ ] Create `app/api/embeddings/compute/route.ts`
-- [ ] Create `app/api/embeddings/search/route.ts`
+- [x] Create `app/api/embeddings/route.ts`
+- [x] Create `app/api/embeddings/search/route.ts`
 
 #### 6.6 Supporting APIs
-- [ ] Create `app/api/authors/route.ts`
-- [ ] Create `app/api/clusters/route.ts`
+- [x] Create `app/api/authors/route.ts` and `[id]/route.ts`
+- [x] Create `app/api/clusters/route.ts` and `[id]/route.ts`
 
-### Phase 7: Admin UI
+### Phase 7: Admin UI ✅
 
 #### 7.1 Layout and Navigation
-- [ ] Create `app/admin/layout.tsx`:
+- [x] Create `app/admin/layout.tsx`:
   - Admin navigation sidebar
-  - Auth check (basic or integrate with existing)
-- [ ] Create shared UI components in `components/ui/`
+- [x] Create `app/admin/page.tsx` - Dashboard overview
 
 #### 7.2 Posts Management
-- [ ] Create `app/admin/posts/page.tsx`:
+- [x] Create `app/admin/posts/page.tsx`:
   - Posts list with filters
   - Status badges
-  - Bulk actions
-- [ ] Create `components/admin/PostEditor.tsx`:
-  - Section editing
-  - Metadata panel
-  - Validation display
-- [ ] Create `app/admin/posts/[id]/page.tsx`:
-  - Full post editor interface
-  - AI assist panel
-- [ ] Create `app/admin/posts/import/page.tsx`:
-  - Import job management
-  - Progress display
+- [x] Create `app/admin/posts/[id]/page.tsx`:
+  - Post editor interface
 
-#### 7.3 Ideas and Briefs
-- [ ] Create `app/admin/ideas/page.tsx`:
+#### 7.3 Ideas Management
+- [x] Create `app/admin/ideas/page.tsx`:
   - Ideas list
-  - Generate new ideas modal
-- [ ] Create `app/admin/ideas/[id]/page.tsx`:
-  - Idea detail
-  - Brief generation
-  - Convert to draft
+- [x] Create `app/admin/ideas/generate/page.tsx`:
+  - Generate new ideas
 
 #### 7.4 Authors and Clusters
-- [ ] Create `app/admin/authors/page.tsx`
-- [ ] Create `app/admin/clusters/page.tsx`
+- [x] Create `app/admin/authors/page.tsx`
+- [x] Create `app/admin/authors/new/page.tsx`
+- [x] Create `app/admin/clusters/page.tsx`
 
-#### 7.5 Analytics
-- [ ] Create `app/admin/analytics/page.tsx`:
-  - Performance overview
-  - Top performing posts
-  - Validation summary
+#### 7.5 Import Management
+- [x] Create `app/admin/import/page.tsx`:
+  - Import from Shopify, sitemap, or URLs
 
-### Phase 8: Public Blog (Optional)
+#### 7.6 Analytics
+- [ ] Create `app/admin/analytics/page.tsx` (planned)
+
+### Phase 8: Public Blog (Planned)
 
 #### 8.1 Blog Pages
-- [ ] Create `app/(public)/blog/page.tsx`:
-  - Blog listing
-  - Pagination
-  - Category filters
-- [ ] Create `app/(public)/blog/[slug]/page.tsx`:
-  - Post rendering
-  - JSON-LD injection
-  - Author bio
-  - Related posts
+- [ ] Create `app/(public)/blog/page.tsx`
+- [ ] Create `app/(public)/blog/[slug]/page.tsx`
 
-### Phase 9: Testing and Validation
+### Phase 9: Additional Modules ✅
 
-#### 9.1 Unit Tests
-- [ ] Test Zod schemas with edge cases
-- [ ] Test normalizer with sample HTML
-- [ ] Test validators with various post states
-- [ ] Test JSON-LD generation
+#### 9.1 Discovery Module
+- [x] Create `lib/discovery/topic-finder.ts`
+- [x] Create `lib/discovery/topic-scorer.ts`
+- [x] Create `lib/discovery/existing-content.ts`
 
-#### 9.2 Integration Tests
-- [ ] Test import pipeline end-to-end
-- [ ] Test AI generation with mocked responses
-- [ ] Test API routes
+#### 9.2 Outline Module
+- [x] Create `lib/outline/outline-generator.ts`
+- [x] Create `lib/outline/outline-types.ts`
 
-#### 9.3 Manual Validation
-- [ ] Import actual Shopify blog posts
-- [ ] Generate 3-5 topic suggestions
-- [ ] Create briefs and drafts
-- [ ] Validate output against schema
+#### 9.3 Shopify Integration
+- [x] Create `lib/shopify/api-client.ts`
+- [x] Create `lib/shopify/article-generator.ts`
+- [x] Create `lib/shopify/article-validator.ts`
+- [x] Create `lib/shopify/content-types.ts`
+- [x] Create `lib/shopify/format-rules.ts`
+- [x] Create `lib/shopify/product-matcher.ts`
+
+### Phase 10: CLI Scripts ✅
+
+- [x] Create `scripts/analyze-style.ts`
+- [x] Create `scripts/create-author.ts`
+- [x] Create `scripts/discover-topics.ts`
+- [x] Create `scripts/generate-article.ts`
+- [x] Create `scripts/generate-outline.ts`
+- [x] Create `scripts/import-shopify.ts`
+- [x] Create `scripts/index-content.ts`
+
+### Phase 11: Testing and Documentation (In Progress)
+
+#### 11.1 Manual Validation
+- [x] Import actual Shopify blog posts
+- [x] Generate topic suggestions
+- [x] Create outlines and articles
 - [ ] Check JSON-LD with Google's Rich Results Test
 
-### Phase 10: Documentation
-
-#### 10.1 Technical Documentation
-- [ ] Document schema fields and constraints
-- [ ] Document database model and migrations
-- [ ] Document API endpoints
-- [ ] Document import process
-
-#### 10.2 User Documentation
-- [ ] How to import existing content
-- [ ] How to generate and approve ideas
-- [ ] How to create and publish posts
-- [ ] How to diagnose validation errors
+#### 11.2 Documentation
+- [x] Document architecture (this file)
+- [x] Document blog style guide
 
 ---
 

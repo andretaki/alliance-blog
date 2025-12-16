@@ -13,7 +13,63 @@
 
 import { db } from '@/lib/db/client';
 import { blogPosts } from '@/lib/db/schema';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, inArray } from 'drizzle-orm';
+import type { PostStatus, Section, FAQ } from '@/lib/schema/canonical';
+
+// ============================================================================
+// POST TYPE FOR ANALYSIS
+// ============================================================================
+
+/**
+ * Blog post fields required for style analysis
+ * Strong typing to prevent null/undefined access errors
+ */
+interface AnalyzablePost {
+  id: string;
+  title: string;
+  rawHtml: string | null;
+  wordCount: number | null;
+  status: PostStatus;
+  sections: Section[] | unknown;
+  faq: FAQ[] | unknown;
+  excerpt?: string | null;
+}
+
+/**
+ * Fetch posts with proper status filtering
+ */
+async function fetchPostsForAnalysis(
+  status: PostStatus | PostStatus[] | 'all',
+  limit: number
+): Promise<AnalyzablePost[]> {
+  if (status === 'all') {
+    const results = await db.query.blogPosts.findMany({
+      orderBy: [desc(blogPosts.wordCount)],
+      limit,
+    });
+    return results as AnalyzablePost[];
+  }
+
+  const statusArray = Array.isArray(status) ? status : [status];
+
+  const results = await db
+    .select({
+      id: blogPosts.id,
+      title: blogPosts.title,
+      rawHtml: blogPosts.rawHtml,
+      wordCount: blogPosts.wordCount,
+      status: blogPosts.status,
+      sections: blogPosts.sections,
+      faq: blogPosts.faq,
+      excerpt: blogPosts.summary,
+    })
+    .from(blogPosts)
+    .where(inArray(blogPosts.status, statusArray))
+    .orderBy(desc(blogPosts.wordCount))
+    .limit(limit);
+
+  return results as AnalyzablePost[];
+}
 
 // ============================================================================
 // TYPES
@@ -224,18 +280,13 @@ export interface DeepStyleProfile extends StyleProfile {
 export async function analyzeWritingStyle(
   options: {
     limit?: number;
-    status?: 'draft' | 'published' | 'all';
+    status?: PostStatus | PostStatus[] | 'all';
   } = {}
 ): Promise<StyleProfile> {
   const { limit = 20, status = 'all' } = options;
 
-  // Fetch posts with full content
-  let query = db.query.blogPosts.findMany({
-    orderBy: [desc(blogPosts.wordCount)], // Prioritize longer, more detailed posts
-    limit,
-  });
-
-  const posts = await query;
+  // Fetch posts with full content and proper status filtering
+  const posts = await fetchPostsForAnalysis(status, limit);
 
   if (posts.length === 0) {
     throw new Error('No posts found to analyze');
@@ -280,16 +331,13 @@ export async function analyzeWritingStyle(
 export async function analyzeDeepStyle(
   options: {
     limit?: number;
-    status?: 'draft' | 'published' | 'all';
+    status?: PostStatus | PostStatus[] | 'all';
   } = {}
 ): Promise<DeepStyleProfile> {
   const { limit = 20, status = 'all' } = options;
 
-  // Fetch posts with full content
-  const posts = await db.query.blogPosts.findMany({
-    orderBy: [desc(blogPosts.wordCount)],
-    limit,
-  });
+  // Fetch posts with full content and proper status filtering
+  const posts = await fetchPostsForAnalysis(status, limit);
 
   if (posts.length === 0) {
     throw new Error('No posts found to analyze');
@@ -322,7 +370,7 @@ export async function analyzeDeepStyle(
 /**
  * Analyze opening hook patterns across posts
  */
-function analyzeOpeningHooks(posts: any[]): DeepStyleProfile['openingHooks'] {
+function analyzeOpeningHooks(posts: AnalyzablePost[]): DeepStyleProfile['openingHooks'] {
   const patterns: OpeningHookPattern[] = [];
   const typeFrequency: Record<OpeningHookType, number> = {
     story: 0,
@@ -464,7 +512,7 @@ function classifyOpeningHook(text: string): OpeningHookType {
 /**
  * Analyze component usage patterns
  */
-function analyzeComponents(posts: any[]): DeepStyleProfile['components'] {
+function analyzeComponents(posts: AnalyzablePost[]): DeepStyleProfile['components'] {
   const componentCounts: Record<ComponentType, { count: number; examples: Array<{ html: string; context: string; sourcePostId: string }> }> = {
     callout_success: { count: 0, examples: [] },
     callout_warning: { count: 0, examples: [] },
@@ -621,7 +669,7 @@ function getPlacementNotes(type: ComponentType): string[] {
 /**
  * Analyze deep voice characteristics
  */
-function analyzeDeepVoice(posts: any[]): DeepStyleProfile['voice'] {
+function analyzeDeepVoice(posts: AnalyzablePost[]): DeepStyleProfile['voice'] {
   const pronounCounts = { we: 0, you: 0, they: 0, i: 0 };
   const sentenceStarters = new Map<string, number>();
   const transitionPhrases: string[] = [];
@@ -719,7 +767,7 @@ function analyzeDeepVoice(posts: any[]): DeepStyleProfile['voice'] {
 /**
  * Analyze trust and credibility signals
  */
-function analyzeTrustSignals(posts: any[]): DeepStyleProfile['trustSignals'] {
+function analyzeTrustSignals(posts: AnalyzablePost[]): DeepStyleProfile['trustSignals'] {
   const patterns: TrustSignal[] = [];
   const brandCredentials: string[] = [];
   const expertReferences: string[] = [];
@@ -780,7 +828,7 @@ function analyzeTrustSignals(posts: any[]): DeepStyleProfile['trustSignals'] {
 /**
  * Analyze technical content patterns
  */
-function analyzeTechnicalContent(posts: any[]): DeepStyleProfile['technicalContent'] {
+function analyzeTechnicalContent(posts: AnalyzablePost[]): DeepStyleProfile['technicalContent'] {
   const chemicalFormulas = new Set<string>();
   const measurementUnits = new Set<string>();
   const technicalTerms = new Set<string>();
@@ -843,7 +891,7 @@ function analyzeTechnicalContent(posts: any[]): DeepStyleProfile['technicalConte
 /**
  * Analyze CTA patterns
  */
-function analyzeCTAPatterns(posts: any[]): DeepStyleProfile['ctaPatterns'] {
+function analyzeCTAPatterns(posts: AnalyzablePost[]): DeepStyleProfile['ctaPatterns'] {
   const primaryCTAs: string[] = [];
   const secondaryCTAs: string[] = [];
   const placements: ('hero' | 'mid_content' | 'end' | 'sidebar')[] = [];
@@ -915,7 +963,7 @@ function analyzeCTAPatterns(posts: any[]): DeepStyleProfile['ctaPatterns'] {
 /**
  * Analyze SEO patterns
  */
-function analyzeSEOPatterns(posts: any[]): DeepStyleProfile['seoPatterns'] {
+function analyzeSEOPatterns(posts: AnalyzablePost[]): DeepStyleProfile['seoPatterns'] {
   const titleFormats: string[] = [];
   const metaFormats: string[] = [];
 
@@ -956,7 +1004,7 @@ function analyzeSEOPatterns(posts: any[]): DeepStyleProfile['seoPatterns'] {
 /**
  * Analyze tone characteristics
  */
-function analyzeTone(posts: any[]): StyleProfile['tone'] {
+function analyzeTone(posts: AnalyzablePost[]): StyleProfile['tone'] {
   let firstPersonCount = 0;
   let secondPersonCount = 0;
   let thirdPersonCount = 0;
@@ -1016,7 +1064,7 @@ function analyzeTone(posts: any[]): StyleProfile['tone'] {
 /**
  * Analyze structural patterns
  */
-function analyzeStructure(posts: any[]): StyleProfile['structure'] {
+function analyzeStructure(posts: AnalyzablePost[]): StyleProfile['structure'] {
   let totalSections = 0;
   let totalWordsInSections = 0;
   let bulletPointPosts = 0;
@@ -1027,7 +1075,7 @@ function analyzeStructure(posts: any[]): StyleProfile['structure'] {
   let totalFAQs = 0;
 
   for (const post of posts) {
-    const sections = post.sections || [];
+    const sections = (Array.isArray(post.sections) ? post.sections : []) as Section[];
     totalSections += sections.length;
 
     for (const section of sections) {
@@ -1042,7 +1090,8 @@ function analyzeStructure(posts: any[]): StyleProfile['structure'] {
     if (/info-box|callout|note|tip/i.test(rawHtml)) infoBoxPosts++;
     if (/cta|call-to-action|shop now|contact|get started/i.test(rawHtml)) ctaPosts++;
 
-    totalFAQs += (post.faq || []).length;
+    const faqs = (Array.isArray(post.faq) ? post.faq : []) as FAQ[];
+    totalFAQs += faqs.length;
   }
 
   const avgSections = totalSections / posts.length;
@@ -1063,7 +1112,7 @@ function analyzeStructure(posts: any[]): StyleProfile['structure'] {
 /**
  * Analyze content patterns
  */
-function analyzeContentPatterns(posts: any[]): StyleProfile['content'] {
+function analyzeContentPatterns(posts: AnalyzablePost[]): StyleProfile['content'] {
   let productLinkPosts = 0;
   let externalRefPosts = 0;
   let safetyInfoPosts = 0;
@@ -1101,7 +1150,7 @@ function analyzeContentPatterns(posts: any[]): StyleProfile['content'] {
 /**
  * Calculate writing metrics
  */
-function calculateMetrics(posts: any[]): StyleProfile['metrics'] {
+function calculateMetrics(posts: AnalyzablePost[]): StyleProfile['metrics'] {
   let totalWords = 0;
   let totalSentences = 0;
   let totalParagraphs = 0;
@@ -1142,7 +1191,7 @@ function calculateMetrics(posts: any[]): StyleProfile['metrics'] {
 /**
  * Extract common patterns and phrases
  */
-function extractPatterns(posts: any[]): StyleProfile['patterns'] {
+function extractPatterns(posts: AnalyzablePost[]): StyleProfile['patterns'] {
   const openings: string[] = [];
   const transitions: string[] = [];
   const ctas: string[] = [];
@@ -1211,20 +1260,20 @@ function extractPatterns(posts: any[]): StyleProfile['patterns'] {
 /**
  * Select the best exemplar posts
  */
-function selectExemplars(posts: any[], count: number): string[] {
+function selectExemplars(posts: AnalyzablePost[], count: number): string[] {
   // Score posts based on quality indicators
   const scoredPosts = posts.map(post => {
     let score = 0;
 
     // Prefer longer, more detailed posts
-    score += Math.min(post.wordCount / 500, 5);
+    score += Math.min((post.wordCount || 0) / 500, 5);
 
     // Prefer posts with good structure
-    const sections = post.sections || [];
+    const sections = (Array.isArray(post.sections) ? post.sections : []) as Section[];
     score += Math.min(sections.length / 2, 3);
 
     // Prefer posts with FAQs
-    const faqs = post.faq || [];
+    const faqs = (Array.isArray(post.faq) ? post.faq : []) as FAQ[];
     score += faqs.length > 0 ? 1 : 0;
 
     // Prefer posts with links
