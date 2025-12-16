@@ -85,7 +85,12 @@ export default function WritePage() {
     }
 
     setLoadingProducts(true);
-    fetch(`/api/writer?collection=${selectedCollection}`)
+    // Use 'all' to fetch all products, or specific collection handle
+    const endpoint = selectedCollection === 'all'
+      ? '/api/writer?collection=all'
+      : `/api/writer?collection=${selectedCollection}`;
+
+    fetch(endpoint)
       .then((res) => res.json())
       .then((data) => {
         setProducts(data.products || []);
@@ -233,6 +238,7 @@ export default function WritePage() {
                     <SelectValue placeholder="Select collection" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="all">All Products</SelectItem>
                     <SelectItem value="random">Random Collection</SelectItem>
                     {collections.map((c) => (
                       <SelectItem key={c.handle} value={c.handle}>
@@ -243,7 +249,7 @@ export default function WritePage() {
                 </Select>
               </div>
 
-              {/* Product Selector - shows when collection selected */}
+              {/* Product Selector - shows when collection or all selected */}
               {selectedCollection !== 'random' && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Product (optional)</label>

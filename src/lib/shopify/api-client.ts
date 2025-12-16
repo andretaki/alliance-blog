@@ -658,6 +658,91 @@ export async function fetchCollectionsGraphQL(): Promise<Array<{
 }
 
 /**
+ * Fetch all products from the store (paginated)
+ */
+export async function fetchAllProductsGraphQL(limit: number = 100): Promise<Array<{
+  id: string;
+  title: string;
+  handle: string;
+  description: string;
+  url: string;
+  featuredImage: { url: string; altText: string | null } | null;
+  images: Array<{ url: string; altText: string | null }>;
+  variants: Array<{
+    id: string;
+    title: string;
+    price: string;
+    url: string;
+  }>;
+  tags: string[];
+}>> {
+  const query = `
+    query GetAllProducts($first: Int!) {
+      products(first: $first) {
+        nodes {
+          id
+          title
+          handle
+          description
+          featuredImage {
+            url
+            altText
+          }
+          images(first: 5) {
+            nodes {
+              url
+              altText
+            }
+          }
+          variants(first: 10) {
+            nodes {
+              id
+              title
+              price
+            }
+          }
+          tags
+        }
+      }
+    }
+  `;
+
+  const data = await shopifyGraphQL<{
+    products: {
+      nodes: Array<{
+        id: string;
+        title: string;
+        handle: string;
+        description: string;
+        featuredImage: { url: string; altText: string | null } | null;
+        images: { nodes: Array<{ url: string; altText: string | null }> };
+        variants: { nodes: Array<{ id: string; title: string; price: string }> };
+        tags: string[];
+      }>;
+    };
+  }>(query, { first: limit });
+
+  const storeHost = 'alliancechemical.com';
+
+  return data.products.nodes.map((p) => ({
+    id: p.id,
+    title: p.title,
+    handle: p.handle,
+    description: p.description || '',
+    url: `https://${storeHost}/products/${p.handle}`,
+    featuredImage: p.featuredImage,
+    images: p.images.nodes,
+    variants: p.variants.nodes.map((v) => ({
+      id: v.id,
+      title: v.title,
+      price: v.price,
+      url: `https://${storeHost}/products/${p.handle}?variant=${v.id.split('/').pop()}`,
+    })),
+    tags: p.tags,
+  }));
+}
+
+/**
  * Fetch products in a collection with full details
  */
 export async function fetchCollectionProductsGraphQL(collectionHandle: string): Promise<Array<{

@@ -19,6 +19,7 @@ import {
   fetchCollectionsGraphQL,
   fetchCollectionProductsGraphQL,
   fetchProductGraphQL,
+  fetchAllProductsGraphQL,
 } from '@/lib/shopify/api-client';
 import { isShopifyConfigured } from '@/lib/config/env';
 import { getDefaultProvider } from '@/lib/ai/providers';
@@ -35,7 +36,16 @@ export async function GET(request: NextRequest) {
   const collectionHandle = searchParams.get('collection');
 
   try {
-    // If collection specified, return products in that collection
+    // If collection=all, return all products from store
+    if (collectionHandle === 'all') {
+      if (!isShopifyConfigured()) {
+        return NextResponse.json({ error: 'Shopify not configured' }, { status: 500 });
+      }
+      const products = await fetchAllProductsGraphQL(250); // Get up to 250 products
+      return NextResponse.json({ products });
+    }
+
+    // If specific collection, return products in that collection
     if (collectionHandle) {
       if (!isShopifyConfigured()) {
         return NextResponse.json({ error: 'Shopify not configured' }, { status: 500 });
@@ -208,12 +218,14 @@ async function handleTopicGeneration(
 
   // Pick collection - use provided or random
   let collectionHandle = data.collectionHandle;
+  const isAllProducts = collectionHandle === 'all';
+
   if (!collectionHandle || collectionHandle === 'random') {
     const randomIndex = Math.floor(Math.random() * collections.length);
     collectionHandle = collections[randomIndex].handle;
   }
 
-  const collection = collections.find((c) => c.handle === collectionHandle);
+  const collection = isAllProducts ? null : collections.find((c) => c.handle === collectionHandle);
   const count = data.count || 3;
 
   // If specific product selected, fetch its details
@@ -231,7 +243,12 @@ async function handleTopicGeneration(
   let products: Awaited<ReturnType<typeof fetchCollectionProductsGraphQL>> = [];
   if (isShopifyConfigured() && !focusProduct) {
     try {
-      products = await fetchCollectionProductsGraphQL(collectionHandle);
+      if (isAllProducts) {
+        // Fetch all products (limit to 50 for context size)
+        products = await fetchAllProductsGraphQL(50);
+      } else {
+        products = await fetchCollectionProductsGraphQL(collectionHandle);
+      }
       productContext = formatProductContext(products);
     } catch (err) {
       console.error('Failed to fetch products from Shopify:', err);
@@ -240,9 +257,10 @@ async function handleTopicGeneration(
 
   // Use AI to generate topics with full product context
   if (productContext) {
+    const collectionName = isAllProducts ? 'All Products' : (collection?.name || collectionHandle);
     const topics = await generateTopicsWithProductContext(
-      collectionHandle,
-      collection?.name || collectionHandle,
+      isAllProducts ? 'all' : collectionHandle,
+      collectionName,
       productContext,
       count,
       focusProduct?.handle
@@ -250,7 +268,9 @@ async function handleTopicGeneration(
 
     return NextResponse.json({
       topics,
-      collection: collection ? { handle: collection.handle, name: collection.name } : null,
+      collection: isAllProducts
+        ? { handle: 'all', name: 'All Products' }
+        : (collection ? { handle: collection.handle, name: collection.name } : null),
       products: focusProduct ? [focusProduct] : products.slice(0, 10), // Include products for UI
       stats: { total: topics.length, unique: topics.length, duplicates: 0, possible: 0 },
     });
