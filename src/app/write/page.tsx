@@ -4,7 +4,9 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -13,7 +15,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-type Step = 1 | 2 | 3 | 4;
+type Step = 1 | 2 | 3;
 
 interface Collection {
   handle: string;
@@ -30,41 +32,103 @@ interface Product {
   variants: Array<{ title: string; price: string; url: string }>;
 }
 
-interface Topic {
-  topic: string;
-  primaryKeyword: string;
-  angle: string;
-  searchIntent: string;
-  uniqueAngle: string;
-  relevantProducts?: string[];
+interface BlogSection {
+  type: string;
+  heading?: string;
+  title?: string;
+  content?: string;
+  variant?: string;
+  items?: unknown[];
+  questions?: unknown[];
+  steps?: unknown[];
+  products?: unknown[];
+  [key: string]: unknown;
 }
 
-interface Outline {
-  meta: { topic: string; targetWordCount: number };
-  sections: Array<{ heading: string; keyPoints: string[] }>;
-  faqSection: { questions: Array<{ question: string }> };
+interface BlogContent {
+  meta: {
+    title: string;
+    metaDescription: string;
+    primaryKeyword: string;
+    secondaryKeywords?: string[];
+  };
+  hero: {
+    subtitle: string;
+    badges: string[];
+    heroImage?: string;
+  };
+  sections: BlogSection[];
+  cta?: {
+    title: string;
+    text: string;
+    buttonText: string;
+    productHandle?: string;
+    buttonUrl?: string;
+  };
 }
 
-interface Post {
-  id: string;
-  title: string;
-  wordCount: number;
-  summary: string;
-}
+const ANGLE_OPTIONS = [
+  { value: 'howto', label: 'How-To Guide', desc: 'Step-by-step instructions' },
+  { value: 'comparison', label: 'Comparison', desc: 'Compare with alternatives' },
+  { value: 'safety', label: 'Safety Guide', desc: 'Safe handling & compliance' },
+  { value: 'technical', label: 'Technical Deep-Dive', desc: 'Specs & properties' },
+  { value: 'application', label: 'Application Guide', desc: 'Industry use cases' },
+  { value: 'guide', label: 'Comprehensive Guide', desc: 'Full product overview' },
+];
+
+const LENGTH_OPTIONS = [
+  { value: 'short', label: 'Short', words: '~1,000 words' },
+  { value: 'medium', label: 'Medium', words: '~2,000 words' },
+  { value: 'long', label: 'Long', words: '~3,500 words' },
+];
+
+const MUST_INCLUDE_OPTIONS = [
+  { id: 'safety', label: 'Safety warnings' },
+  { id: 'table', label: 'Comparison table' },
+  { id: 'faqs', label: 'FAQs section' },
+  { id: 'steps', label: 'Process steps' },
+  { id: 'case-study', label: 'Case study' },
+];
+
+const SECTION_ICONS: Record<string, string> = {
+  text: '📝',
+  callout: '⚠️',
+  table: '📊',
+  comparison: '⚖️',
+  'process-steps': '📋',
+  'case-study': '💼',
+  'product-grid': '🛒',
+  image: '🖼️',
+  faq: '❓',
+};
 
 export default function WritePage() {
   const [step, setStep] = useState<Step>(1);
+
+  // Step 1 state
   const [collections, setCollections] = useState<Collection[]>([]);
-  const [selectedCollection, setSelectedCollection] = useState('random');
+  const [selectedCollection, setSelectedCollection] = useState('all');
   const [products, setProducts] = useState<Product[]>([]);
-  const [selectedProduct, setSelectedProduct] = useState<string>('any');
+  const [selectedProduct, setSelectedProduct] = useState<string>('');
   const [loadingProducts, setLoadingProducts] = useState(false);
-  const [topics, setTopics] = useState<Topic[]>([]);
-  const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null);
-  const [collectionInfo, setCollectionInfo] = useState<{ handle: string; name: string } | null>(null);
-  const [outline, setOutline] = useState<Outline | null>(null);
-  const [context, setContext] = useState('');
-  const [post, setPost] = useState<Post | null>(null);
+  const [angle, setAngle] = useState('guide');
+  const [targetLength, setTargetLength] = useState('medium');
+  const [primaryKeyword, setPrimaryKeyword] = useState('');
+  const [mustInclude, setMustInclude] = useState<string[]>(['faqs', 'safety']);
+  const [additionalNotes, setAdditionalNotes] = useState('');
+  const [tone, setTone] = useState('professional');
+
+  // Step 2 state
+  const [content, setContent] = useState<BlogContent | null>(null);
+  const [regeneratingIndex, setRegeneratingIndex] = useState<number | null>(null);
+
+  // Step 3 state
+  const [html, setHtml] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedPost, setSavedPost] = useState<{ id: string; slug: string; title: string } | null>(null);
+
+  // Shared state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -78,14 +142,13 @@ export default function WritePage() {
 
   // Load products when collection changes
   useEffect(() => {
-    if (selectedCollection === 'random') {
+    if (!selectedCollection) {
       setProducts([]);
-      setSelectedProduct('any');
+      setSelectedProduct('');
       return;
     }
 
     setLoadingProducts(true);
-    // Use 'all' to fetch all products, or specific collection handle
     const endpoint = selectedCollection === 'all'
       ? '/api/writer?collection=all'
       : `/api/writer?collection=${selectedCollection}`;
@@ -94,121 +157,221 @@ export default function WritePage() {
       .then((res) => res.json())
       .then((data) => {
         setProducts(data.products || []);
-        setSelectedProduct('any');
+        setSelectedProduct('');
       })
       .catch(() => setProducts([]))
       .finally(() => setLoadingProducts(false));
   }, [selectedCollection]);
 
-  async function generateTopics() {
+  async function generateArticle() {
+    if (!selectedProduct) {
+      setError('Please select a product');
+      return;
+    }
+
     setLoading(true);
     setError('');
-    setTopics([]);
-    setSelectedTopic(null);
+
     try {
       const res = await fetch('/api/writer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'topic',
-          collectionHandle: selectedCollection === 'random' ? undefined : selectedCollection,
-          productHandle: selectedProduct === 'any' ? undefined : selectedProduct,
-          count: 3,
+          action: 'generate-article',
+          productHandle: selectedProduct,
+          angle,
+          targetLength,
+          primaryKeyword: primaryKeyword || undefined,
+          mustInclude: mustInclude.length > 0 ? mustInclude : undefined,
+          tone,
+          additionalNotes: additionalNotes || undefined,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setTopics(data.topics);
-      setCollectionInfo(data.collection);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to generate topics');
-    } finally {
-      setLoading(false);
-    }
-  }
 
-  async function generateOutline() {
-    if (!selectedTopic) return;
-    setLoading(true);
-    setError('');
-    try {
-      const res = await fetch('/api/writer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'outline', topic: selectedTopic }),
-      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setOutline(data.outline);
+
+      setContent(data.content);
+      setHtml(data.html);
       setStep(2);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to generate outline');
+      setError(e instanceof Error ? e.message : 'Failed to generate article');
     } finally {
       setLoading(false);
     }
   }
 
-  async function generateContent() {
-    if (!selectedTopic || !outline) return;
-    setLoading(true);
-    setError('');
+  async function regenerateSection(index: number) {
+    if (!content) return;
+
+    setRegeneratingIndex(index);
+    const section = content.sections[index];
+
     try {
       const res = await fetch('/api/writer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'generate',
-          topic: selectedTopic,
-          outline,
-          context,
-          saveToDB: true,
+          action: 'regenerate-section',
+          sectionIndex: index,
+          sectionType: section.type,
+          context: {
+            productHandle: selectedProduct,
+            angle,
+            primaryKeyword: content.meta.primaryKeyword,
+          },
+          existingSections: content.sections,
         }),
       });
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setPost(data.post);
-      setStep(4);
+
+      // Update the section in content
+      const newSections = [...content.sections];
+      newSections[index] = data.section;
+      setContent({ ...content, sections: newSections });
+
+      // Re-render HTML
+      await renderHtml({ ...content, sections: newSections });
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to generate content');
+      setError(e instanceof Error ? e.message : 'Failed to regenerate section');
     } finally {
-      setLoading(false);
+      setRegeneratingIndex(null);
     }
+  }
+
+  async function renderHtml(contentToRender: BlogContent) {
+    try {
+      const res = await fetch('/api/writer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'render-html',
+          content: contentToRender,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      setHtml(data.html);
+    } catch (e) {
+      console.error('Failed to render HTML:', e);
+    }
+  }
+
+  function copyHtml() {
+    navigator.clipboard.writeText(html);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  async function saveArticle() {
+    if (!content || !html) return;
+
+    setSaving(true);
+    setError('');
+
+    try {
+      const res = await fetch('/api/writer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save-article',
+          content,
+          html,
+          productHandle: selectedProduct,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      setSavedPost({
+        id: data.postId,
+        slug: data.slug,
+        title: data.title,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save article');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function getSectionLabel(section: BlogSection): string {
+    const icon = SECTION_ICONS[section.type] || '📄';
+    const name = section.heading || section.title || section.type;
+    return `${icon} ${name}`;
+  }
+
+  function getSectionPreview(section: BlogSection): string {
+    if (section.content) {
+      return section.content.slice(0, 100) + (section.content.length > 100 ? '...' : '');
+    }
+    if (section.questions && Array.isArray(section.questions)) {
+      return `${section.questions.length} questions`;
+    }
+    if (section.steps && Array.isArray(section.steps)) {
+      return `${section.steps.length} steps`;
+    }
+    if (section.items && Array.isArray(section.items)) {
+      return `${section.items.length} items`;
+    }
+    if (section.products && Array.isArray(section.products)) {
+      return `${section.products.length} products`;
+    }
+    return section.type;
+  }
+
+  function toggleMustInclude(id: string) {
+    setMustInclude(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
   }
 
   function reset() {
     setStep(1);
-    setTopics([]);
-    setSelectedTopic(null);
-    setCollectionInfo(null);
-    setOutline(null);
-    setContext('');
-    setPost(null);
+    setContent(null);
+    setHtml('');
     setError('');
+    setCopied(false);
+    setSavedPost(null);
   }
 
   return (
     <div className="min-h-screen bg-background p-8">
-      <div className="max-w-2xl mx-auto space-y-6">
+      <div className="max-w-3xl mx-auto space-y-6">
         {/* Header */}
         <div className="text-center space-y-2">
-          <h1 className="text-3xl font-bold tracking-tight">Content Writer</h1>
-          <p className="text-muted-foreground">AI generates topics based on your products</p>
+          <h1 className="text-3xl font-bold tracking-tight">Blog Writer</h1>
+          <p className="text-muted-foreground">Generate blog articles from your products</p>
         </div>
 
         {/* Progress */}
-        <div className="flex justify-center gap-2">
-          {[1, 2, 3, 4].map((s) => (
-            <div
-              key={s}
-              className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-                s < step
-                  ? 'bg-primary text-primary-foreground'
-                  : s === step
-                    ? 'border-2 border-primary text-primary'
-                    : 'border border-muted text-muted-foreground'
-              }`}
-            >
-              {s < step ? '✓' : s}
+        <div className="flex justify-center gap-2 items-center">
+          {[
+            { num: 1, label: 'Setup' },
+            { num: 2, label: 'Edit' },
+            { num: 3, label: 'Export' },
+          ].map((s, i) => (
+            <div key={s.num} className="flex items-center">
+              <div
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
+                  s.num < step
+                    ? 'bg-primary text-primary-foreground'
+                    : s.num === step
+                      ? 'border-2 border-primary text-primary'
+                      : 'border border-muted text-muted-foreground'
+                }`}
+              >
+                {s.num < step ? '✓' : s.num}
+              </div>
+              <span className={`ml-2 text-sm ${s.num === step ? 'font-medium' : 'text-muted-foreground'}`}>
+                {s.label}
+              </span>
+              {i < 2 && <div className="w-8 h-px bg-border mx-2" />}
             </div>
           ))}
         </div>
@@ -218,51 +381,51 @@ export default function WritePage() {
           <Card className="border-destructive">
             <CardContent className="pt-4">
               <p className="text-destructive text-sm">{error}</p>
+              <Button variant="ghost" size="sm" onClick={() => setError('')} className="mt-2">
+                Dismiss
+              </Button>
             </CardContent>
           </Card>
         )}
 
-        {/* Step 1: Topics */}
+        {/* Step 1: Setup */}
         {step === 1 && (
           <Card>
             <CardHeader>
-              <CardTitle>1. Select Product & Generate Topics</CardTitle>
-              <CardDescription>Pick a collection and optionally a specific product</CardDescription>
+              <CardTitle>1. Setup</CardTitle>
+              <CardDescription>Configure your article parameters</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Collection Selector */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Collection</label>
-                <Select value={selectedCollection} onValueChange={setSelectedCollection}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select collection" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Products</SelectItem>
-                    <SelectItem value="random">Random Collection</SelectItem>
-                    {collections.map((c) => (
-                      <SelectItem key={c.handle} value={c.handle}>
-                        {c.name} {c.productsCount ? `(${c.productsCount})` : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Product Selector - shows when collection or all selected */}
-              {selectedCollection !== 'random' && (
+            <CardContent className="space-y-6">
+              {/* Product Selection */}
+              <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Product (optional)</label>
+                  <label className="text-sm font-medium">Collection</label>
+                  <Select value={selectedCollection} onValueChange={setSelectedCollection}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select collection" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Products</SelectItem>
+                      {collections.map((c) => (
+                        <SelectItem key={c.handle} value={c.handle}>
+                          {c.name} {c.productsCount ? `(${c.productsCount})` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Product *</label>
                   <Select
                     value={selectedProduct}
                     onValueChange={setSelectedProduct}
-                    disabled={loadingProducts}
+                    disabled={loadingProducts || products.length === 0}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder={loadingProducts ? 'Loading...' : 'Any product'} />
+                      <SelectValue placeholder={loadingProducts ? 'Loading...' : 'Select product'} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="any">Any product in collection</SelectItem>
                       {products.map((p) => (
                         <SelectItem key={p.handle} value={p.handle}>
                           {p.title}
@@ -270,157 +433,281 @@ export default function WritePage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  {selectedProduct !== 'any' && products.find(p => p.handle === selectedProduct) && (
-                    <div className="p-3 rounded-lg bg-muted text-sm">
-                      <p className="font-medium">{products.find(p => p.handle === selectedProduct)?.title}</p>
-                      <p className="text-muted-foreground text-xs mt-1">
-                        {products.find(p => p.handle === selectedProduct)?.variants.length} variants available
-                      </p>
-                    </div>
-                  )}
                 </div>
-              )}
+              </div>
 
-              <Button onClick={generateTopics} disabled={loading} className="w-full">
-                {loading ? 'Generating Topics...' : 'Generate Topics'}
-              </Button>
-
-              {collectionInfo && (
-                <p className="text-sm text-muted-foreground">
-                  Topics for: <span className="font-medium">{collectionInfo.name}</span>
-                </p>
-              )}
-
-              {/* Topic Options */}
-              {topics.length > 0 && (
-                <div className="space-y-3">
-                  <p className="text-sm font-medium">Select a topic:</p>
-                  {topics.map((topic, i) => (
+              {/* Angle Selection */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Article Angle</label>
+                <div className="grid gap-2 md:grid-cols-3">
+                  {ANGLE_OPTIONS.map((opt) => (
                     <div
-                      key={i}
-                      onClick={() => setSelectedTopic(topic)}
-                      className={`p-4 rounded-lg border cursor-pointer transition-colors ${
-                        selectedTopic === topic
+                      key={opt.value}
+                      onClick={() => setAngle(opt.value)}
+                      className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                        angle === opt.value
                           ? 'border-primary bg-primary/5'
                           : 'border-border hover:border-primary/50'
                       }`}
                     >
-                      <h3 className="font-medium">{topic.topic}</h3>
-                      <div className="flex gap-2 mt-2 flex-wrap">
-                        <Badge variant="secondary">{topic.primaryKeyword}</Badge>
-                        <Badge variant="outline">{topic.angle}</Badge>
-                        <Badge variant="outline">{topic.searchIntent}</Badge>
-                      </div>
-                      <p className="text-sm text-muted-foreground mt-2">{topic.uniqueAngle}</p>
-                      {topic.relevantProducts && topic.relevantProducts.length > 0 && (
-                        <p className="text-xs text-muted-foreground mt-2">
-                          Products: {topic.relevantProducts.join(', ')}
-                        </p>
-                      )}
+                      <p className="font-medium text-sm">{opt.label}</p>
+                      <p className="text-xs text-muted-foreground">{opt.desc}</p>
                     </div>
                   ))}
-
-                  <div className="flex gap-2 pt-2">
-                    <Button variant="outline" onClick={generateTopics} disabled={loading}>
-                      Regenerate
-                    </Button>
-                    <Button onClick={generateOutline} disabled={!selectedTopic || loading}>
-                      {loading ? 'Creating outline...' : 'Next →'}
-                    </Button>
-                  </div>
                 </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
+              </div>
 
-        {/* Step 2: Outline */}
-        {step === 2 && outline && (
-          <Card>
-            <CardHeader>
-              <CardTitle>2. Outline</CardTitle>
-              <CardDescription>{outline.meta.targetWordCount} words target</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+              {/* Length Selection */}
               <div className="space-y-2">
-                {outline.sections.map((s, i) => (
-                  <div key={i} className="p-3 rounded bg-muted">
-                    <p className="font-medium">{s.heading}</p>
-                    <ul className="mt-1 text-sm text-muted-foreground">
-                      {s.keyPoints.slice(0, 2).map((p, j) => (
-                        <li key={j}>• {p}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
+                <label className="text-sm font-medium">Target Length</label>
+                <div className="flex gap-2">
+                  {LENGTH_OPTIONS.map((opt) => (
+                    <Button
+                      key={opt.value}
+                      variant={targetLength === opt.value ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setTargetLength(opt.value)}
+                    >
+                      {opt.label} <span className="text-xs ml-1 opacity-70">{opt.words}</span>
+                    </Button>
+                  ))}
+                </div>
               </div>
-              <p className="text-sm text-muted-foreground">
-                + {outline.faqSection.questions.length} FAQs
-              </p>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setStep(1)}>
-                  ← Back
-                </Button>
-                <Button onClick={() => setStep(3)}>Next →</Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
 
-        {/* Step 3: Context */}
-        {step === 3 && (
-          <Card>
-            <CardHeader>
-              <CardTitle>3. Add Context</CardTitle>
-              <CardDescription>Optional notes for the AI</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Textarea
-                placeholder="Add any specific instructions...&#10;&#10;Examples:&#10;- Focus on safety&#10;- Compare with other products&#10;- Target industrial use cases"
-                value={context}
-                onChange={(e) => setContext(e.target.value)}
-                rows={6}
-              />
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setStep(2)}>
-                  ← Back
-                </Button>
-                <Button onClick={generateContent} disabled={loading}>
-                  {loading ? 'Generating...' : 'Generate Content →'}
-                </Button>
+              {/* SEO Keyword */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Primary Keyword (optional)</label>
+                <Input
+                  placeholder="e.g., industrial ethylene glycol"
+                  value={primaryKeyword}
+                  onChange={(e) => setPrimaryKeyword(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">Leave blank to let AI suggest</p>
               </div>
+
+              {/* Must Include */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Must Include</label>
+                <div className="flex flex-wrap gap-3">
+                  {MUST_INCLUDE_OPTIONS.map((opt) => (
+                    <label key={opt.id} className="flex items-center gap-2 cursor-pointer">
+                      <Checkbox
+                        checked={mustInclude.includes(opt.id)}
+                        onCheckedChange={() => toggleMustInclude(opt.id)}
+                      />
+                      <span className="text-sm">{opt.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Tone */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Tone</label>
+                <Select value={tone} onValueChange={setTone}>
+                  <SelectTrigger className="w-48">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="professional">Professional</SelectItem>
+                    <SelectItem value="conversational">Conversational</SelectItem>
+                    <SelectItem value="technical">Technical</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Additional Notes */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Additional Notes (optional)</label>
+                <Textarea
+                  placeholder="Any specific requirements or context..."
+                  value={additionalNotes}
+                  onChange={(e) => setAdditionalNotes(e.target.value)}
+                  rows={3}
+                />
+              </div>
+
+              <Button
+                onClick={generateArticle}
+                disabled={loading || !selectedProduct}
+                className="w-full"
+                size="lg"
+              >
+                {loading ? 'Generating Article...' : 'Generate Article →'}
+              </Button>
+
               {loading && (
                 <p className="text-sm text-muted-foreground text-center">
-                  This may take a minute...
+                  This may take 30-60 seconds...
                 </p>
               )}
             </CardContent>
           </Card>
         )}
 
-        {/* Step 4: Done */}
-        {step === 4 && post && (
+        {/* Step 2: Edit Sections */}
+        {step === 2 && content && (
           <Card>
             <CardHeader>
-              <CardTitle>4. Done!</CardTitle>
-              <CardDescription>Your post has been created</CardDescription>
+              <CardTitle>2. Edit Sections</CardTitle>
+              <CardDescription>
+                {content.meta.title}
+                <br />
+                <span className="text-xs">Keyword: {content.meta.primaryKeyword}</span>
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="p-4 rounded-lg bg-muted">
-                <h3 className="font-semibold">{post.title}</h3>
-                <p className="text-sm text-muted-foreground mt-1">{post.summary}</p>
-                <p className="text-xs text-muted-foreground mt-2">{post.wordCount} words</p>
+              {/* Hero info */}
+              <div className="p-3 rounded-lg bg-muted">
+                <p className="text-sm font-medium">Hero Section</p>
+                <p className="text-sm text-muted-foreground">{content.hero.subtitle}</p>
+                <div className="flex gap-1 mt-2 flex-wrap">
+                  {content.hero.badges.map((b, i) => (
+                    <Badge key={i} variant="secondary" className="text-xs">{b}</Badge>
+                  ))}
+                </div>
               </div>
-              <div className="flex gap-2">
-                <Button asChild>
-                  <a href={`/admin/posts/${post.id}`}>Edit Draft</a>
-                </Button>
+
+              {/* Sections */}
+              <div className="space-y-2">
+                {content.sections.map((section, index) => (
+                  <div
+                    key={index}
+                    className="flex items-start justify-between p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm truncate">
+                        {getSectionLabel(section)}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {getSectionPreview(section)}
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => regenerateSection(index)}
+                      disabled={regeneratingIndex !== null}
+                      className="ml-2 shrink-0"
+                    >
+                      {regeneratingIndex === index ? '...' : '⟲'}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+
+              {/* CTA info */}
+              {content.cta && (
+                <div className="p-3 rounded-lg bg-primary/5 border border-primary/20">
+                  <p className="text-sm font-medium">Call to Action</p>
+                  <p className="text-sm">{content.cta.title}</p>
+                  <p className="text-xs text-muted-foreground">{content.cta.text}</p>
+                </div>
+              )}
+
+              {/* Meta info */}
+              <div className="p-3 rounded-lg bg-muted">
+                <p className="text-sm font-medium">SEO Meta</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {content.meta.metaDescription}
+                </p>
+                {content.meta.secondaryKeywords && content.meta.secondaryKeywords.length > 0 && (
+                  <div className="flex gap-1 mt-2 flex-wrap">
+                    {content.meta.secondaryKeywords.map((k, i) => (
+                      <Badge key={i} variant="outline" className="text-xs">{k}</Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2 pt-2">
                 <Button variant="outline" onClick={reset}>
-                  Create Another
+                  ← Start Over
+                </Button>
+                <Button onClick={() => setStep(3)} className="flex-1">
+                  Preview HTML →
                 </Button>
               </div>
             </CardContent>
           </Card>
+        )}
+
+        {/* Step 3: Preview & Export */}
+        {step === 3 && (
+          <div className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>3. Preview & Export</CardTitle>
+                <CardDescription>Review the rendered HTML and copy to Shopify</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {savedPost && (
+                  <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-green-800">
+                    <p className="font-medium">Saved to database!</p>
+                    <p className="text-sm">
+                      <a href={`/admin/posts/${savedPost.id}`} className="underline">
+                        View draft: {savedPost.title}
+                      </a>
+                    </p>
+                  </div>
+                )}
+                <div className="flex gap-2 flex-wrap">
+                  <Button onClick={copyHtml} className="flex-1">
+                    {copied ? '✓ Copied!' : 'Copy HTML'}
+                  </Button>
+                  <Button
+                    onClick={saveArticle}
+                    disabled={saving || !!savedPost}
+                    variant={savedPost ? 'outline' : 'default'}
+                  >
+                    {saving ? 'Saving...' : savedPost ? '✓ Saved' : 'Save Draft'}
+                  </Button>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => setStep(2)}>
+                    ← Edit
+                  </Button>
+                  <Button variant="outline" onClick={reset}>
+                    New Article
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* HTML Preview */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm">Live Preview</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div
+                  className="border rounded-lg overflow-hidden"
+                  style={{ maxHeight: '600px', overflowY: 'auto' }}
+                >
+                  <iframe
+                    srcDoc={html}
+                    title="Blog Preview"
+                    className="w-full"
+                    style={{ height: '600px', border: 'none' }}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Raw HTML (collapsible) */}
+            <details className="group">
+              <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground">
+                View Raw HTML
+              </summary>
+              <Card className="mt-2">
+                <CardContent className="pt-4">
+                  <pre className="text-xs overflow-auto max-h-96 p-4 bg-muted rounded-lg">
+                    {html}
+                  </pre>
+                </CardContent>
+              </Card>
+            </details>
+          </div>
         )}
       </div>
     </div>

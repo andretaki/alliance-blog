@@ -21,6 +21,8 @@ interface Post {
   aiAssisted: boolean;
   publishedAt: string | null;
   updatedAt: string;
+  rawHtml: string | null;
+  source: string;
   sections: Array<{
     id: string;
     headingLevel: string;
@@ -69,7 +71,16 @@ export default function PostDetailPage() {
   const [validation, setValidation] = useState<ValidationReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [publishing, setPublishing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'content' | 'seo' | 'validation'>('content');
+  const [activeTab, setActiveTab] = useState<'content' | 'seo' | 'html' | 'validation'>('content');
+  const [copied, setCopied] = useState(false);
+
+  function copyHtml() {
+    if (post?.rawHtml) {
+      navigator.clipboard.writeText(post.rawHtml);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }
 
   useEffect(() => {
     if (params.id) {
@@ -213,7 +224,7 @@ export default function PostDetailPage() {
         {/* Tabs */}
         <div className="border-b border-gray-200 px-6">
           <nav className="-mb-px flex space-x-8">
-            {(['content', 'seo', 'validation'] as const).map((tab) => (
+            {(['content', 'seo', 'html', 'validation'] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -221,9 +232,12 @@ export default function PostDetailPage() {
                   activeTab === tab
                     ? 'border-indigo-500 text-indigo-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm capitalize`}
+                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm capitalize flex items-center gap-1`}
               >
-                {tab}
+                {tab === 'html' ? 'HTML' : tab}
+                {tab === 'html' && post.rawHtml && (
+                  <span className="bg-green-100 text-green-800 text-xs px-1.5 py-0.5 rounded-full">Ready</span>
+                )}
               </button>
             ))}
           </nav>
@@ -319,6 +333,70 @@ export default function PostDetailPage() {
                   <h3 className="text-sm font-medium text-gray-700">Topic Cluster</h3>
                   <Link href={`/admin/clusters`} className="mt-1 text-sm text-indigo-600 hover:text-indigo-500">
                     {post.cluster.name}
+                  </Link>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'html' && (
+            <div className="space-y-4">
+              {post.rawHtml ? (
+                <>
+                  {/* Copy Button */}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-600">
+                        Generated HTML ready to paste into Shopify
+                      </p>
+                      {post.source === 'writer' && (
+                        <span className="inline-flex items-center text-xs text-purple-600 mt-1">
+                          Created with Blog Writer
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={copyHtml}
+                      className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700"
+                    >
+                      {copied ? '✓ Copied!' : 'Copy HTML'}
+                    </button>
+                  </div>
+
+                  {/* Live Preview */}
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-700 mb-2">Live Preview</h3>
+                    <div className="border border-gray-200 rounded-lg overflow-hidden" style={{ maxHeight: '500px', overflowY: 'auto' }}>
+                      <iframe
+                        srcDoc={post.rawHtml}
+                        title="HTML Preview"
+                        className="w-full"
+                        style={{ height: '500px', border: 'none' }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Raw HTML */}
+                  <details className="group">
+                    <summary className="cursor-pointer text-sm font-medium text-gray-500 hover:text-gray-700">
+                      View Raw HTML
+                    </summary>
+                    <div className="mt-2 bg-gray-50 rounded-lg p-4 overflow-auto max-h-96">
+                      <pre className="text-xs text-gray-600 whitespace-pre-wrap">{post.rawHtml}</pre>
+                    </div>
+                  </details>
+                </>
+              ) : (
+                <div className="text-center py-12">
+                  <p className="text-gray-500">No HTML content available for this post.</p>
+                  <p className="text-sm text-gray-400 mt-2">
+                    This post was not created with the Blog Writer tool.
+                  </p>
+                  <Link
+                    href="/write"
+                    className="inline-block mt-4 px-4 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-md hover:bg-indigo-100"
+                  >
+                    Create New Article with Blog Writer
                   </Link>
                 </div>
               )}

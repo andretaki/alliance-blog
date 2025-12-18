@@ -644,17 +644,24 @@ export async function fetchCollectionsGraphQL(): Promise<Array<{
           id
           handle
           title
-          productsCount
+          productsCount {
+            count
+          }
         }
       }
     }
   `;
 
   const data = await shopifyGraphQL<{
-    collections: { nodes: Array<{ id: string; handle: string; title: string; productsCount: number }> };
+    collections: { nodes: Array<{ id: string; handle: string; title: string; productsCount: { count: number } }> };
   }>(query);
 
-  return data.collections.nodes;
+  return data.collections.nodes.map((c) => ({
+    id: c.id,
+    handle: c.handle,
+    title: c.title,
+    productsCount: c.productsCount.count,
+  }));
 }
 
 /**
